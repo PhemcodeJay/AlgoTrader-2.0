@@ -185,26 +185,27 @@ class DashboardComponents:
 
         df = pd.DataFrame([
             {
-                'Symbol': t.get('symbol', 'N/A'),
-                'Side': t.get('side', 'N/A'),
-                'Entry': f"${t.get('entry_price', 0):.2f}" if t.get('entry_price') is not None else "N/A",
-                'Exit': f"${t.get('exit_price', 0):.2f}" if t.get('exit_price') is not None else "N/A",
-                'Qty': f"{t.get('qty', 0):,.2f}" if t.get('qty') is not None else "N/A",
-                'Leverage': f"{t.get('leverage', 'N/A')}x" if t.get('leverage') is not None else "N/A",
-                'Margin (USDT)': f"${t.get('margin_usdt', 0):.2f}" if t.get('margin_usdt') is not None else "N/A",
+                'Symbol': getattr(t, 'symbol', 'N/A'),
+                'Side': getattr(t, 'side', 'N/A'),
+                'Entry': f"${getattr(t, 'entry_price', 0):.2f}" if getattr(t, 'entry_price', None) is not None else "N/A",
+                'Exit': f"${getattr(t, 'exit_price', 0):.2f}" if getattr(t, 'exit_price', None) is not None else "N/A",
+                'Qty': f"{getattr(t, 'qty', 0):,.2f}" if getattr(t, 'qty', None) is not None else "N/A",
+                'Leverage': f"{getattr(t, 'leverage', 'N/A')}x" if getattr(t, 'leverage', None) is not None else "N/A",
+                'Margin (USDT)': f"${getattr(t, 'margin_usdt', 0):.2f}" if getattr(t, 'margin_usdt', None) is not None else "N/A",
                 'P&L': (
-                    f"{'🟢' if t.get('pnl', 0) > 0 else '🔴'} ${t.get('pnl', 0):.2f}"
-                    if t.get('pnl') is not None else "N/A"
+                    f"{'🟢' if getattr(t, 'pnl', 0) > 0 else '🔴'} ${getattr(t, 'pnl', 0):.2f}"
+                    if getattr(t, 'pnl', None) is not None else "N/A"
                 ),
-                'Status': t.get('status', 'N/A'),
-                'Strategy': t.get('strategy', 'N/A'),
-                'Virtual': '✅' if t.get('virtual', False) else '❌',
-                'Timestamp': format_timestamp(t.get('timestamp'))
+                'Status': getattr(t, 'status', 'N/A'),
+                'Strategy': getattr(t, 'strategy', 'N/A'),
+                'Virtual': '✅' if getattr(t, 'virtual', False) else '❌',
+                'Timestamp': format_timestamp(getattr(t, 'timestamp', None))
             }
             for t in trades
         ])
 
         st.dataframe(df, use_container_width=True, height=400)
+
 
     def calculate_duration(self, trade):
         try:
