@@ -1,0 +1,9 @@
+{
+    "SCAN_INTERVAL": 3600,
+    "TOP_N_SIGNALS": 5,
+    "MAX_LOSS_PCT": -15.0,
+    "TP_PERCENT": 0.3,
+    "SL_PERCENT": 0.15,
+    "LEVERAGE": 20,
+    "RISK_PER_TRADE": 0.01
+}

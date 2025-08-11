@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: Algotrader
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app/main.py --server.port=$PORT --server.address=0.0.0.0
+    envVars:
+      - fromDatabase:
+          name: algotrader_db_3o6k
+          property: connectionString
+        key: DATABASE_URL
+
+databases:
+  - name: algotrader_db_3o6k
+    user: cryptopilot
