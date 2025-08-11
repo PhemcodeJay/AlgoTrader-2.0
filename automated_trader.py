@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 try:
     import bybit_client
     from engine import TradingEngine
-    from utils import calculate_drawdown
+    from utils import calculate_drawdown # type: ignore
 except ImportError as e:
     logging.error(f"Import error: {e}")
 
