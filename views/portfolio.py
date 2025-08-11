@@ -183,21 +183,32 @@ def paginate_trades(formatted_trades, page_key):
 
 def manage_open_trades(trades, trading_engine):
     for trade in trades:
-        with st.expander(f"{trade['Symbol']} | {trade['Side']} | Entry: {trade['Entry']}"):
-            cols = st.columns(4)
-            cols[0].markdown(f"**Qty:** {trade['Qty']}")
-            cols[1].markdown(f"**SL:** {trade['SL']}")
-            cols[2].markdown(f"**TP:** {trade['TP']}")
-            cols[3].markdown(f"**PnL:** {trade['PnL']}")
-            st.markdown(f"**Status:** {trade['Status']} | **Mode:** {'Virtual' if trade['Virtual'] else 'Real'} ⏱ `{trade['Time']}`")
+        symbol = trade.get('Symbol', 'UNKNOWN')
+        side = trade.get('Side', 'N/A')
+        entry = trade.get('Entry', 'N/A')
+        qty = trade.get('Qty', 0)
+        sl = trade.get('SL', 'N/A')
+        tp = trade.get('TP', 'N/A')
+        pnl = trade.get('PnL', 0.0)
+        status = trade.get('Status', 'N/A')
+        virtual = trade.get('Virtual', False)
+        time_str = trade.get('Time', '')
 
-            if trade["Status"].lower() == "open":
+        with st.expander(f"{symbol} | {side} | Entry: {entry}"):
+            cols = st.columns(4)
+            cols[0].markdown(f"**Qty:** {qty}")
+            cols[1].markdown(f"**SL:** {sl}")
+            cols[2].markdown(f"**TP:** {tp}")
+            cols[3].markdown(f"**PnL:** {pnl}")
+            st.markdown(f"**Status:** {status} | **Mode:** {'Virtual' if virtual else 'Real'} ⏱ `{time_str}`")
+
+            if status.lower() == "open":
                 trade_id = trade.get("id") or trade.get("order_id") or trade.get("Order ID")
-                is_virtual = trade.get("Virtual", False)
+                is_virtual = virtual
 
                 col1, col2 = st.columns([1, 3])
                 with col1:
-                    if st.button("❌ Close Trade", key=f"close_{trade['Symbol']}_{trade_id}_{trade['Time']}"):
+                    if st.button("❌ Close Trade", key=f"close_{symbol}_{trade_id}_{time_str}"):
                         if trade_id:
                             success = trading_engine.close_trade(str(trade_id), is_virtual)
                             if success:
