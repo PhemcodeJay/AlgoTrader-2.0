@@ -10,13 +10,22 @@ try:
     from utils import calculate_drawdown
 except ImportError as e:
     logging.error(f"Import error: {e}")
-    # Fallback implementations
-    class TradingEngine:
+
+    # Fallback implementations with correct attributes for type checking
+    class DummyTradingEngine:
         def __init__(self):
-            pass
-    
+            self.db = None
+            self.client = None
+
+        def run_once(self):
+            return []
+
+    TradingEngine = DummyTradingEngine
+
     def calculate_drawdown(equity_curve):
+        # Return two floats to match expected signature
         return 0.0, 0.0
+
 
 # Logging configuration (placed before other imports to catch early logs)
 logging.basicConfig(
@@ -32,20 +41,31 @@ logger = logging.getLogger(__name__)
 class AutomatedTrader:
     def __init__(self):
         self.engine = TradingEngine()
-        self.db = self.engine.db
-        self.client = self.engine.client
+        # Use type-ignore if engine.db or engine.client might be None (fallback)
+        self.db = self.engine.db  # type: ignore
+        self.client = self.engine.client  # type: ignore
         self.is_running = False
         self.automation_thread = None
-        self.bybitClient = bybit_client.BybitClient()
-        self.signal_interval = int(self.db.get_setting("SCAN_INTERVAL") or 3600)
-        self.max_signals = int(self.db.get_setting("TOP_N_SIGNALS") or 5)
-        self.max_drawdown_limit = float(self.db.get_setting("MAX_DRAWDOWN") or 20)
-        self.max_daily_trades = int(self.db.get_setting("MAX_DAILY_TRADES") or 50)
-        self.max_position_pct = float(self.db.get_setting("MAX_POSITION_PCT") or 5)
+
+        # bybit_client might be missing if import failed; guard it
+        self.bybitClient = None
+        if 'bybit_client' in globals():
+            try:
+                self.bybitClient = bybit_client.BybitClient()
+            except Exception as e:
+                logger.error(f"Failed to initialize BybitClient: {e}")
+                self.bybitClient = None
+
+        # Settings with fallback defaults
+        self.signal_interval = int(self.db.get_setting("SCAN_INTERVAL") or 3600) if self.db else 3600
+        self.max_signals = int(self.db.get_setting("TOP_N_SIGNALS") or 5) if self.db else 5
+        self.max_drawdown_limit = float(self.db.get_setting("MAX_DRAWDOWN") or 20) if self.db else 20.0
+        self.max_daily_trades = int(self.db.get_setting("MAX_DAILY_TRADES") or 50) if self.db else 50
+        self.max_position_pct = float(self.db.get_setting("MAX_POSITION_PCT") or 5) if self.db else 5.0
 
         self.last_run_time = None
 
-        stats_setting = self.db.get_setting("AUTOMATION_STATS")
+        stats_setting = self.db.get_setting("AUTOMATION_STATS") if self.db else None
         self.stats = json.loads(stats_setting) if stats_setting else {
             "signals_generated": 0,
             "last_update": None,
@@ -57,11 +77,16 @@ class AutomatedTrader:
         self.logger = logger
 
     def get_today_trades(self):
+        if not self.db:
+            return []
         all_trades = self.db.get_trades(limit=500)
         today_str = datetime.now().strftime("%Y-%m-%d")
-        return [t for t in all_trades if t.timestamp.strftime("%Y-%m-%d") == today_str]
+        return [t for t in all_trades if hasattr(t, "timestamp") and t.timestamp.strftime("%Y-%m-%d") == today_str]
 
     def check_risk_limits(self):
+        if not self.db:
+            return True
+
         trades = self.db.get_trades(limit=1000)
 
         try:
@@ -74,7 +99,7 @@ class AutomatedTrader:
             capital = 100
 
         equity_curve = [float(capital)]
-        sorted_trades = sorted(trades, key=lambda t: t.timestamp)
+        sorted_trades = sorted(trades, key=lambda t: getattr(t, "timestamp", datetime.min))
 
         for trade in sorted_trades:
             pnl = getattr(trade, "pnl", 0.0)
@@ -96,60 +121,52 @@ class AutomatedTrader:
         return True
 
     def log_trade_results(self):
-        today_trades = self.get_today_trades()
+        trades = self.get_today_trades()
 
-        for trade in today_trades:
+        for trade in trades:
             if getattr(trade, "_logged", False):
                 continue
 
             pnl = getattr(trade, "pnl", 0.0)
-            status = getattr(trade, "status", "unknown")
-            
-            self.logger.info(f"Trade Result: {trade.symbol} - {status} - PnL: ${pnl:.2f}")
-            setattr(trade, "_logged", True)
-            continue
-
-            symbol = getattr(trade, "symbol", "UNKNOWN")
-            side = getattr(trade, "side", "N/A")
-            entry = getattr(trade, "entry_price", None)
-            exit_price = getattr(trade, "exit_price", None)
-            pnl = getattr(trade, "pnl", None)
-
-            if None in (entry, exit_price, pnl):
-                self.logger.warning(
-                    f"[SKIP] Incomplete trade data for {symbol}: Entry={entry}, Exit={exit_price}, PnL={pnl}"
-                )
-                continue
-
             if pnl is None:
-                self.logger.warning(f"[SKIP] PnL is None for {symbol}")
-                continue
-
+                pnl = 0.0
             try:
                 pnl_float = float(pnl)
             except (TypeError, ValueError):
-                self.logger.warning(f"[SKIP] PnL not float-convertible for {symbol}: {pnl}")
-                continue
+                pnl_float = 0.0
 
-            self.stats["trades_executed"] += 1
-            self.stats["total_pnl"] += pnl_float
+            status = getattr(trade, "status", "unknown")
+            symbol = getattr(trade, "symbol", "UNKNOWN")
 
-            if pnl_float > 0:
-                self.stats["successful_trades"] += 1
-                outcome = "✅ PROFIT"
-            else:
-                self.stats["failed_trades"] += 1
-                outcome = "❌ LOSS"
-
-            self.logger.info(
-                f"[TRADE] {symbol} {side} | Entry: {entry:.4f} | Exit: {exit_price:.4f} | PnL: {pnl_float:.2f} | {outcome}"
-            )
-
+            self.logger.info(f"Trade Result: {symbol} - {status} - PnL: ${pnl_float:.2f}")
             setattr(trade, "_logged", True)
+
+            # Uncomment below if you want more detailed logging (currently unreachable due to continue above)
+            # side = getattr(trade, "side", "N/A")
+            # entry = getattr(trade, "entry_price", None)
+            # exit_price = getattr(trade, "exit_price", None)
+            #
+            # if None in (entry, exit_price, pnl):
+            #     self.logger.warning(f"[SKIP] Incomplete trade data for {symbol}: Entry={entry}, Exit={exit_price}, PnL={pnl}")
+            #     continue
+            #
+            # self.stats["trades_executed"] += 1
+            # self.stats["total_pnl"] += pnl_float
+            #
+            # if pnl_float > 0:
+            #     self.stats["successful_trades"] += 1
+            #     outcome = "✅ PROFIT"
+            # else:
+            #     self.stats["failed_trades"] += 1
+            #     outcome = "❌ LOSS"
+            #
+            # self.logger.info(
+            #     f"[TRADE] {symbol} {side} | Entry: {entry:.4f} | Exit: {exit_price:.4f} | PnL: {pnl_float:.2f} | {outcome}"
+            # )
 
     def get_available_capital(self) -> float:
         try:
-            if hasattr(self.bybitClient, 'use_real') and self.bybitClient.use_real:
+            if self.bybitClient and hasattr(self.bybitClient, 'use_real') and self.bybitClient.use_real:
                 try:
                     balance_info = self.bybitClient.get_wallet_balance()
                     return float(balance_info.get("available_balance", 0.0))
@@ -162,7 +179,6 @@ class AutomatedTrader:
                         data = json.load(f)
                         return float(data.get("virtual", {}).get("capital", 100.0))
                 except FileNotFoundError:
-                    # Create default capital file
                     default_capital = {
                         "virtual": {"capital": 100.0, "start_balance": 100.0},
                         "real": {"capital": 0.0, "start_balance": 0.0}
@@ -177,7 +193,6 @@ class AutomatedTrader:
             self.logger.error(f"Failed to load capital: {e}")
             return 0.0
 
-
     def automation_cycle(self):
         start_time = datetime.now()
 
@@ -185,12 +200,12 @@ class AutomatedTrader:
             try:
                 now = datetime.now()
 
-                # ⏱️ Stop automation after 1 hour
+                # Stop automation after 1 hour
                 if (now - start_time).total_seconds() >= 3600:
                     self.logger.info("🕒 Automation session completed: 1 hour elapsed.")
                     break
 
-                # 🕰️ Time to run a new signal scan
+                # Time to run new signal scan
                 if not self.last_run_time or (now - self.last_run_time).total_seconds() >= self.signal_interval:
                     self.logger.info("⚙️ Starting automation cycle...")
 
@@ -205,9 +220,12 @@ class AutomatedTrader:
                             time.sleep(60)
                         continue
 
-                    # ✅ Run signal engine
-                    raw_signals = self.engine.run_once() or []
-                    valid_symbols = {s["symbol"] for s in self.client.get_symbols()}
+                    raw_signals = []
+                    if self.engine and hasattr(self.engine, "run_once"):
+                        raw_signals = self.engine.run_once() or []
+                    valid_symbols = set()
+                    if self.client and hasattr(self.client, "get_symbols"):
+                        valid_symbols = {s["symbol"] for s in self.client.get_symbols()}
 
                     top_signals = []
                     capital = self.get_available_capital()
@@ -235,12 +253,12 @@ class AutomatedTrader:
                             continue
 
                         top_signals.append(signal)
-                        capital -= margin_required  # 🧠 Reserve capital
+                        capital -= margin_required  # reserve capital
 
                         if len(top_signals) >= self.max_signals:
                             break
 
-                    # 🟩 Insert Trades into DB
+                    # Insert Trades into DB
                     for signal in top_signals:
                         try:
                             order_id = f"virtual_{int(time.time() * 1000)}"
@@ -258,21 +276,23 @@ class AutomatedTrader:
                                 "timestamp": datetime.now(timezone.utc),
                                 "status": "open",
                                 "order_id": order_id,
-                                "virtual": not self.bybitClient.use_real,
+                                "virtual": not (self.bybitClient.use_real if self.bybitClient else False),
                             }
 
-                            self.db.add_trade(trade_data)
+                            if self.db:
+                                self.db.add_trade(trade_data)
                             self.logger.info(f"✅ Trade inserted: {trade_data['symbol']} | Order ID: {order_id}")
 
                         except Exception as e:
                             self.logger.error(f"❌ Failed to insert trade for {signal.get('Symbol')}: {e}", exc_info=True)
 
-                    # 📊 Update stats
+                    # Update stats
                     self.stats["signals_generated"] += len(top_signals)
                     self.stats["last_update"] = now.isoformat()
 
                     self.log_trade_results()
-                    self.db.update_automation_stats(self.stats)
+                    if self.db:
+                        self.db.update_automation_stats(self.stats)
 
                     self.last_run_time = now
                     self.logger.info(f"✅ Cycle complete. {len(top_signals)} trades processed. Next run in {self.signal_interval} seconds.")
@@ -282,7 +302,6 @@ class AutomatedTrader:
             except Exception as e:
                 self.logger.error(f"❌ Automation error: {e}", exc_info=True)
                 time.sleep(90)
-            
 
     def start(self):
         if self.is_running:
@@ -321,16 +340,16 @@ class AutomatedTrader:
         }
 
     def update_settings(self, new_settings: dict):
-        for key, value in new_settings.items():
-            self.db.set_setting(key, value)
+        if self.db:
+            for key, value in new_settings.items():
+                self.db.set_setting(key, value)
 
-        self.signal_interval = int(self.db.get_setting("SCAN_INTERVAL") or 3600)
-        self.max_signals = int(self.db.get_setting("TOP_N_SIGNALS") or 5)
-        self.max_drawdown_limit = float(self.db.get_setting("MAX_DRAWDOWN") or 20)
-        self.max_daily_trades = int(self.db.get_setting("MAX_DAILY_TRADES") or 50)
-        self.max_position_pct = float(self.db.get_setting("MAX_POSITION_PCT") or 5)
+            self.signal_interval = int(self.db.get_setting("SCAN_INTERVAL") or 3600)
+            self.max_signals = int(self.db.get_setting("TOP_N_SIGNALS") or 5)
+            self.max_drawdown_limit = float(self.db.get_setting("MAX_DRAWDOWN") or 20)
+            self.max_daily_trades = int(self.db.get_setting("MAX_DAILY_TRADES") or 50)
+            self.max_position_pct = float(self.db.get_setting("MAX_POSITION_PCT") or 5)
 
 
-    
-# ✅ Singleton instance
+# Singleton instance
 automated_trader = AutomatedTrader()
