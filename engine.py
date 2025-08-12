@@ -339,25 +339,31 @@ class TradingEngine:
     def run_loop(self):
         print("[Engine] ♻️ Starting scan loop...")
 
-        scan_interval = 3600  # 1 hour in seconds
+    scan_interval = 3600  # 1 hour in seconds
 
-        while True:
-            try:
-                print("\n[Engine] 🚀 Running scan...")
-                self.run_once()
-            except Exception as e:
-                print(f"[Engine] ❌ Error during scan: {e}")
+    while True:
+        try:
+            # Update unrealized PnL before each scan
+            self.client.update_unrealized_pnl()
 
-            print(f"[Engine] ⏱️ Countdown to next scan ({scan_interval // 60} minutes):")
+            # If virtual mode, monitor virtual orders
+            if not getattr(self.client, "use_real", False) and hasattr(self.client, "monitor_virtual_orders"):
+                self.client.monitor_virtual_orders()
 
-            for remaining in range(scan_interval, 0, -1):
-                # Convert seconds to hh:mm:ss format
-                time_str = str(timedelta(seconds=remaining))
-                sys.stdout.write(f"\r[Engine] ⏳ Time remaining: {time_str} ")
-                sys.stdout.flush()
-                time.sleep(1)
+            print("\n[Engine] 🚀 Running scan...")
+            self.run_once()
+        except Exception as e:
+            print(f"[Engine] ❌ Error during scan: {e}")
 
-            print("\n[Engine] 🔁 Restarting scan...")
+        print(f"[Engine] ⏱️ Countdown to next scan ({scan_interval // 60} minutes):")
+
+        for remaining in range(scan_interval, 0, -1):
+            time_str = str(timedelta(seconds=remaining))
+            sys.stdout.write(f"\r[Engine] ⏳ Time remaining: {time_str} ")
+            sys.stdout.flush()
+            time.sleep(1)
+
+        print("\n[Engine] 🔁 Restarting scan...")
 
 
     def get_recent_trades(self, limit=10):
