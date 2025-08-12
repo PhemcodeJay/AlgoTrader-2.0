@@ -43,45 +43,56 @@ def render(trading_engine, dashboard):
                 st.warning("No historical data found for this symbol/timeframe.")
                 return
 
-            # Convert to DataFrame if not already
             if not isinstance(chart_data, pd.DataFrame):
                 df = pd.DataFrame(chart_data)
             else:
                 df = chart_data
 
-            # Ensure timestamps are proper datetime
+            # Convert and clean timestamps
             if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
                 df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
             df.dropna(subset=['timestamp', 'open', 'high', 'low', 'close'], inplace=True)
-
     except Exception as e:
         st.error(f"Failed to load historical data: {e}")
         return
 
-    # === Render chart ===
-    try:
-        fig = dashboard.create_technical_chart(
-            data=df.to_dict("records"),
-            symbol=selected_symbol,
-            indicators=indicators,
-            theme="dark",
-            layout="tight"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Error rendering chart: {e}")
-        st.write(df.head())
-        return
+    # === Tabs for Chart, Signals, Summary ===
+    tab_chart, tab_signals, tab_summary = st.tabs(["📊 Chart", "🎯 Signals", "📋 Summary"])
 
-    # === Show recent signals ===
-    try:
-        current_signals = [
-            s for s in trading_engine.get_recent_signals()
-            if s.get("symbol") == selected_symbol
-        ]
-        if current_signals:
-            st.subheader(f"🎯 Current Signals for {selected_symbol}")
-            for signal in current_signals:
-                dashboard.display_signal_card(signal)
-    except Exception as e:
-        st.warning(f"Failed to load signals: {e}")
+    with tab_chart:
+        try:
+            fig = dashboard.create_technical_chart(
+                data=df.to_dict("records"),
+                symbol=selected_symbol,
+                indicators=indicators,
+                theme="dark",
+                layout="tight"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error rendering chart: {e}")
+            st.write(df.head())
+
+    with tab_signals:
+        try:
+            current_signals = [
+                s for s in trading_engine.get_recent_signals()
+                if s.get("symbol") == selected_symbol
+            ]
+            if current_signals:
+                st.subheader(f"🎯 Current Signals for {selected_symbol}")
+                for signal in current_signals:
+                    dashboard.display_signal_card(signal)
+            else:
+                st.info("No current signals for this symbol.")
+        except Exception as e:
+            st.warning(f"Failed to load signals: {e}")
+
+    with tab_summary:
+        st.subheader(f"📋 Summary for {selected_symbol}")
+        # Placeholder - you can add summary stats, OHLC aggregates, volume stats etc.
+        try:
+            st.write(f"Showing summary stats for {selected_symbol} - timeframe: {timeframe}")
+            st.write(df.describe())
+        except Exception as e:
+            st.error(f"Failed to generate summary: {e}")
