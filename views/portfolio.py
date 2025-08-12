@@ -18,10 +18,10 @@ def render(trading_engine, dashboard):
         col1, col2 = st.columns(2)
         with col1:
             st.metric("💰 Real Balance", f"${float(real.get('capital', 0.0)):,.2f}")
-            st.metric("Available Real", f"${float(real.get('available', 0.0)):,.2f}")
+            st.metric("Available Real", f"${float(real.get('available', real.get('capital', 0.0))):,.2f}")
         with col2:
             st.metric("🧪 Virtual Balance", f"${float(virtual.get('capital', 0.0)):,.2f}")
-            st.metric("Available Virtual", f"${float(virtual.get('available', 0.0)):,.2f}")
+            st.metric("Available Virtual", f"${float(virtual.get('available', virtual.get('capital', 0.0))):,.2f}")
     except Exception as e:
         st.error(f"Error loading wallet data: {e}")
 
@@ -183,16 +183,16 @@ def paginate_trades(formatted_trades, page_key):
 
 def manage_open_trades(trades, trading_engine):
     for trade in trades:
-        symbol = trade.get('Symbol', 'UNKNOWN')
-        side = trade.get('Side', 'N/A')
-        entry = trade.get('Entry', 'N/A')
-        qty = trade.get('Qty', 0)
-        sl = trade.get('SL', 'N/A')
-        tp = trade.get('TP', 'N/A')
-        pnl = trade.get('PnL', 0.0)
-        status = trade.get('Status', 'N/A')
-        virtual = trade.get('Virtual', False)
-        time_str = trade.get('Time', '')
+        symbol = trade.get('symbol', 'UNKNOWN')
+        side = trade.get('side', 'N/A')
+        entry = trade.get('entry_price', 'N/A')
+        qty = trade.get('qty', 0)
+        sl = trade.get('stop_loss', 'N/A')
+        tp = trade.get('take_profit', 'N/A')
+        pnl = trade.get('pnl', 0.0)
+        status = trade.get('status', 'N/A')
+        virtual = trade.get('virtual', False)
+        time_str = trade.get('timestamp', '')
 
         with st.expander(f"{symbol} | {side} | Entry: {entry}"):
             cols = st.columns(4)
@@ -203,7 +203,7 @@ def manage_open_trades(trades, trading_engine):
             st.markdown(f"**Status:** {status} | **Mode:** {'Virtual' if virtual else 'Real'} ⏱ `{time_str}`")
 
             if status.lower() == "open":
-                trade_id = trade.get("id") or trade.get("order_id") or trade.get("Order ID")
+                trade_id = trade.get("order_id")
                 is_virtual = virtual
 
                 col1, col2 = st.columns([1, 3])
@@ -213,7 +213,7 @@ def manage_open_trades(trades, trading_engine):
                             success = trading_engine.close_trade(str(trade_id), is_virtual)
                             if success:
                                 st.success(f"{'Virtual' if is_virtual else 'Real'} trade closed successfully.")
-                                st.rerun()
+                                st.experimental_rerun()
                             else:
                                 st.error("Failed to close trade.")
                         else:
