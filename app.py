@@ -1,46 +1,99 @@
 import streamlit as st
+import sys
+import os
+import logging
+from datetime import datetime
 from PIL import Image
-from utils import get_status_color, format_currency, format_percentage, get_ticker_snapshot
+from utils import get_ticker_snapshot
 from engine import engine
 from dashboard_components import DashboardComponents
 from automated_trader import automated_trader
 from db import db_manager
-from streamlit_autorefresh import st_autorefresh
 
-# Page config
-st.set_page_config(
-    page_title="AlgoTrader",
-    page_icon="🚀",
-    layout="wide",
-    initial_sidebar_state="expanded"
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("app.log"),
+        logging.StreamHandler()
+    ]
 )
-st.set_option("client.showErrorDetails", True)
+logger = logging.getLogger(__name__)
 
-# Sidebar logo and title
-logo = Image.open("logo.png")
-st.sidebar.image(logo, width=40)
-st.sidebar.title("🚀 AlgoTrader")
-st.sidebar.markdown("---")
+# Add current directory to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Auto refresh checkbox
-auto_refresh_enabled = st.sidebar.checkbox("Auto Refresh (15 min)", value=True)
-if auto_refresh_enabled:
-    st_autorefresh(interval=900_000, limit=None, key="auto_refresh_15min")
+# Import views
+try:
+    from views import dashboard, portfolio, signals, automation, settings, charts, database
+except ImportError as e:
+    logger.error(f"Failed to import views: {e}")
+    st.error("Application initialization failed. Please check the logs.")
+    st.stop()
 
+# Conditional import for auto-refresh
+try:
+    from streamlit_autorefresh import st_autorefresh
+    HAS_AUTOREFRESH = True
+except ImportError:
+    HAS_AUTOREFRESH = False
+    logger.warning("streamlit-autorefresh not available, auto-refresh disabled")
+
+# --- Setup Page ---
+try:
+    st.set_page_config(
+        page_title="AlgoTrader",
+        page_icon="🚀",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    st.set_option("client.showErrorDetails", True)
+except Exception as e:
+    logger.error(f"Failed to set page config: {e}")
+    st.error("Failed to initialize application configuration")
+
+# --- Sidebar Header ---
+try:
+    logo = Image.open("logo.png")
+    st.sidebar.image(logo, width=100)
+    st.sidebar.title("🚀 AlgoTrader")
+    st.sidebar.markdown("---")
+except Exception as e:
+    logger.error(f"Failed to render sidebar header: {e}")
+    st.sidebar.error("Failed to load sidebar elements")
+
+# --- Auto Refresh ---
+if HAS_AUTOREFRESH:
+    auto_refresh_enabled = st.sidebar.checkbox("Auto Refresh (15 min)", value=True)
+    if auto_refresh_enabled:
+        st_autorefresh(interval=900_000, limit=None, key="auto_refresh_15min")
+else:
+    st.sidebar.info("Auto-refresh disabled (package not installed)")
+
+# --- Init Components ---
 @st.cache_resource
 def init_components():
     return engine, DashboardComponents(engine)
 
-trading_engine, dashboard = init_components()
+try:
+    trading_engine, dashboard = init_components()
+except Exception as e:
+    logger.error(f"Failed to initialize components: {e}")
+    st.error("Failed to initialize trading engine and dashboard components.")
+    st.stop()
 
-# Try load ticker data for dashboard ticker bar
+# --- Market Ticker Bar ---
 try:
     ticker_data = get_ticker_snapshot()
-    dashboard.render_ticker(ticker_data, position="top")
+    ticker_html = dashboard.render_ticker(ticker_data, position="top")
+    if ticker_html:
+        st.markdown(ticker_html, unsafe_allow_html=True)
 except Exception as e:
+    logger.warning(f"⚠️ Could not load market ticker: {e}")
     st.warning(f"⚠️ Could not load market ticker: {e}")
 
-# Sidebar navigation menu
+# --- Navigation Menu ---
 page = st.sidebar.selectbox(
     "Navigate",
     [
@@ -54,96 +107,61 @@ page = st.sidebar.selectbox(
     ]
 )
 
-# Manual refresh button
+# --- Manual Refresh Button ---
 if st.sidebar.button("🔄 Refresh Now"):
     st.cache_data.clear()
     st.rerun()
 
-# Sidebar wallet & status info
-try:
-    balance_dict = trading_engine.load_capital() or {}
-    daily_pnl_pct = trading_engine.get_daily_pnl()
+# --- Sidebar Wallet Display ---
+def render_wallet_summary(trading_engine):
+    try:
+        capital_data = trading_engine.load_capital("all") or {}
+        real = capital_data.get("real", {})
+        virtual = capital_data.get("virtual", {})
 
-    balance_value = float(balance_dict.get("capital", 100.0))
-    daily_pnl_value = daily_pnl_pct if isinstance(daily_pnl_pct, (int, float)) else 0.0
+        # --- Virtual Wallet ---
+        st.sidebar.subheader("🧪 Virtual Wallet")
+        st.sidebar.metric("Available", f"${float(virtual.get('available', 0.0)):,.2f}")
+        st.sidebar.metric("Total", f"${float(virtual.get('capital', 0.0)):,.2f}")
 
-    status = (
-        "success" if daily_pnl_value > 0
-        else "failed" if daily_pnl_value < 0
-        else "pending"
-    )
-    status_color = get_status_color(status)
+        # --- Real Wallet ---
+        st.sidebar.subheader("💰 Real Wallet")
+        st.sidebar.metric("Available", f"${float(real.get('available', 0.0)):,.2f}")
+        st.sidebar.metric("Total", f"${float(real.get('capital', 0.0)):,.2f}")
 
-    st.sidebar.metric(
-        "💰 Wallet Balance",
-        f"{format_currency(balance_value)}",
-        f"{format_percentage(daily_pnl_value)} today"
-    )
+    except Exception as e:
+        logger.error(f"❌ Wallet Load Error: {e}")
+        st.sidebar.error(f"❌ Wallet Load Error: {e}")
 
-    max_loss_pct = trading_engine.default_settings.get("MAX_LOSS_PCT", -15.0)
-    trading_status = "🟢 Active" if daily_pnl_value > max_loss_pct else "🔴 Paused"
-    st.sidebar.markdown(
-        f"**Status:** <span style='color: {status_color}'>{trading_status}</span>",
-        unsafe_allow_html=True
-    )
-
-    automation_status = automated_trader.get_status()
-    automation_color = "#00d4aa" if automation_status.get("running", False) else "#ff4444"
-    st.sidebar.markdown(
-        f"**Auto Mode:** <span style='color: {automation_color}'>{'🤖 Running' if automation_status.get('running', False) else '⏸️ Stopped'}</span>",
-        unsafe_allow_html=True
-    )
-
-    db_health = db_manager.get_db_health()
-    db_color = "#00d4aa" if db_health.get("status") == "ok" else "#ff4444"
-    db_status = "🟢 Ok" if db_health.get("status") == "ok" else f"🔴 Error: {db_health.get('error', '')}"
-
-    st.sidebar.markdown(
-        f"**Database:** <span style='color: {db_color}'>{db_status}</span>",
-        unsafe_allow_html=True
-    )
-
-except Exception as e:
-    st.sidebar.error(f"❌ Sidebar Metrics Error: {e}")
+# Render Sidebar Wallet Info
+render_wallet_summary(trading_engine)
 
 # --- Page Routing ---
+def route_page(page: str,
+               trading_engine,
+               dashboard,
+               db_manager,
+               automated_trader=None):
+    if page == "🏠 Dashboard":
+        dashboard.render(trading_engine, dashboard, db_manager)
+    elif page == "📊 Signals":
+        signals.render(trading_engine, dashboard)
+    elif page == "💼 Portfolio":
+        portfolio.render(trading_engine, dashboard)
+    elif page == "📈 Charts":
+        charts.render(trading_engine, dashboard)
+    elif page == "🤖 Automation":
+        automation.render(trading_engine, dashboard, db_manager)
+    elif page == "🗄️ Database":
+        database.render()
+    elif page == "⚙️ Settings":
+        settings.render(trading_engine, dashboard)
+    else:
+        st.warning(f"Unknown page: {page}")
 
-if page == "🏠 Dashboard":
-    import views.dashboard as view
-    view.render(trading_engine, dashboard, db_manager)
-
-elif page == "📊 Signals":
-    import views.signals as view
-    view.render(trading_engine, dashboard)
-
-elif page == "💼 Portfolio":
-    import views.portfolio as view
-    view.render(trading_engine, dashboard)
-
-elif page == "📈 Charts":
-    import views.charts as view
-    view.render(trading_engine, dashboard)
-
-elif page == "🤖 Automation":
-    import views.automation as view
-    view.render(trading_engine, dashboard, automated_trader)
-
-elif page == "🗄️ Database":
-    st.title("🗄️ Database Overview")
-
-    db_health = db_manager.get_db_health()
-    st.write(f"Database Health: {db_health.get('status')}")
-    if db_health.get("status") != "ok":
-        st.error(f"Database Error: {db_health.get('error', 'Unknown error')}")
-
-    signals_count = db_manager.get_signals_count()
-    trades_count = db_manager.get_trades_count()
-    portfolio_count = db_manager.get_portfolio_count()
-
-    st.write(f"Signals count: {signals_count}")
-    st.write(f"Trades count: {trades_count}")
-    st.write(f"Portfolio count: {portfolio_count}")
-
-elif page == "⚙️ Settings":
-    import views.settings as view
-    view.render(trading_engine, dashboard)
+# Execute page routing
+try:
+    route_page(page, trading_engine, dashboard, db_manager, automated_trader)
+except Exception as e:
+    logger.error(f"Error rendering page '{page}': {e}")
+    st.error(f"Failed to load {page}. Please check logs.")

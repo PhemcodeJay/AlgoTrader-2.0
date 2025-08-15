@@ -18,6 +18,40 @@ def signal_handler(sig, frame):
 
 
 def main():
+    print("🚀 Starting AlgoTrader Automation...")
+    
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        # Start automation
+        if automated_trader.start():
+            print("✅ Automation started successfully")
+            print("📊 Dashboard available at: http://localhost:5001")
+            print("🛑 Press Ctrl+C to stop automation")
+            
+            # Keep the script running
+            while automated_trader.is_running:
+                time.sleep(1)
+                
+        else:
+            print("❌ Failed to start automation")
+            sys.exit(1)
+            
+    except KeyboardInterrupt:
+        signal_handler(signal.SIGINT, None)
+    except Exception as e:
+        print(f"❌ Automation error: {e}")
+        automated_trader.stop()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()it(0)
+
+
+def main():
     print("🚀 AlgoTrader Automated Trading")
     print("=" * 40)
     print("This script runs the automated trading system alongside your dashboard.")
@@ -50,4 +84,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()e__ == "__main__":
     main()

@@ -1,26 +1,23 @@
 import os
-import json
 import numpy as np
 import pandas as pd
 import joblib
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
-
 from dotenv import load_dotenv
-load_dotenv()  # Load DATABASE_URL from .env
 
-from db import db  # Requires DATABASE_URL to be loaded
+load_dotenv()
 
-# === Configuration Paths ===
+from db import db  # Your SQLAlchemy DatabaseManager
+
 MODEL_PATH = "ml_models/profit_xgb_model.pkl"
-SIGNAL_EXPORT_PATH = "reports/signals/"
-TRADE_EXPORT_PATH = "reports/trades/"
 
 
 class MLFilter:
     def __init__(self):
         self.model = self._load_model()
         self.db = db
+        self._last_training_size = 0
 
     def _load_model(self):
         if os.path.exists(MODEL_PATH):
@@ -44,175 +41,186 @@ class MLFilter:
         ])
 
     def enhance_signal(self, signal: dict) -> dict:
-        # ML scoring
         if self.model:
             features = self.extract_features(signal).reshape(1, -1)
             prob = self.model.predict_proba(features)[0][1]
             signal["score"] = round(prob * 100, 2)
             signal["confidence"] = int(min(signal["score"] + np.random.uniform(0, 10), 100))
         else:
-            signal["score"] = signal.get("score", np.random.uniform(50, 75))
+            signal["score"] = signal.get("score", np.random.uniform(55, 70))
             signal["confidence"] = int(min(signal["score"] + np.random.uniform(5, 20), 100))
 
-        # Margin USDT calculation
         try:
-            entry_raw = signal.get("entry") or signal.get("Entry")
-            entry_price = float(entry_raw) if entry_raw is not None else 0.0
-
-            leverage_raw = signal.get("leverage", 20)
-            leverage = int(leverage_raw) if leverage_raw is not None else 20
-
-            capital_raw = signal.get("capital", 100)
-            capital = float(capital_raw) if capital_raw is not None else 100.0
+            entry_price = float(signal.get("entry", 0))
+            leverage = int(signal.get("leverage", 20))
+            capital = float(signal.get("capital", 100))
 
             if entry_price > 0 and leverage > 0:
                 margin = capital / leverage
                 signal["margin_usdt"] = round(margin, 2)
             else:
-                signal["margin_usdt"] = None
-        except (TypeError, ValueError):
-            signal["margin_usdt"] = None
+                signal["margin_usdt"] = 5.0
+        except (ValueError, TypeError):
+            signal["margin_usdt"] = 5.0
 
         return signal
 
+    def load_data_from_db(self, limit=1000) -> list:
+        combined = []
 
-    def migrate_signals_to_json(self):
-        os.makedirs(SIGNAL_EXPORT_PATH, exist_ok=True)
-        signals = self.db.get_signals(limit=500)
-
-        count = 0
-        for sig in signals:
-            try:
-                sig_dict = sig.to_dict()
-                if "id" not in sig_dict or "symbol" not in sig_dict:
-                    print(f"[ML] ⚠️ Skipping signal with missing 'id' or 'symbol': {sig_dict}")
-                    continue
-
-                filename = os.path.join(SIGNAL_EXPORT_PATH, f"{sig_dict['id']}_{sig_dict['symbol']}.json")
-                with open(filename, "w") as f:
-                    json.dump(sig_dict, f, indent=2, default=str)
-                count += 1
-            except Exception as e:
-                print(f"[ML] ⚠️ Failed to export signal: {e}")
-
-        print(f"[ML] ✅ Exported {count} signals to {SIGNAL_EXPORT_PATH}")
-
-    def migrate_trades_to_json(self):
-        os.makedirs(TRADE_EXPORT_PATH, exist_ok=True)
-        trades = self.db.get_trades(limit=500)
-
-        count = 0
+        # Load trades data
+        trades = self.db.get_trades(limit=limit)
         for trade in trades:
-            try:
-                trade_dict = trade.to_dict()
-                entry = trade_dict.get("entry")
-                exit_ = trade_dict.get("exit")
-                side = trade_dict.get("side")
+            t = trade.to_dict()
+            entry_price = t.get("entry_price", 0)
+            exit_price = t.get("exit_price", 0)
+            
+            if entry_price and exit_price:
+                direction = 1 if t["side"] == "LONG" else -1
+                profit = 1 if direction * (exit_price - entry_price) > 0 else 0
+            else:
+                profit = 1 if t.get("pnl", 0) > 0 else 0
 
-                if entry is not None and exit_ is not None and side:
-                    direction = 1 if side == "LONG" else -1
-                    trade_dict["profit"] = 1 if direction * (exit_ - entry) > 0 else 0
-                else:
-                    trade_dict["profit"] = 0
+            combined.append({
+                "entry": entry_price,
+                "tp": t.get("take_profit", 0),
+                "sl": t.get("stop_loss", 0),
+                "trail": 0,
+                "score": 60,
+                "confidence": 60,
+                "side": t.get("side", "LONG"),
+                "trend": "Neutral",
+                "regime": "Breakout",
+                "profit": profit,
+            })
 
-                if "id" not in trade_dict or "symbol" not in trade_dict:
-                    print(f"[ML] ⚠️ Skipping trade with missing 'id' or 'symbol': {trade_dict}")
-                    continue
+        # Load signals data
+        signals = self.db.get_signals(limit=limit)
+        for signal in signals:
+            s = signal.to_dict()
+            indicators = s.get("indicators", {}) or {}
+            
+            entry = s.get("entry") or indicators.get("entry", 0)
+            tp = s.get("tp") or indicators.get("tp", 0)
+            sl = s.get("sl") or indicators.get("sl", 0)
+            
+            combined.append({
+                "entry": entry,
+                "tp": tp,
+                "sl": sl,
+                "trail": indicators.get("trail", 0),
+                "score": s.get("score", 60),
+                "confidence": s.get("score", 60),
+                "side": s.get("side", "LONG"),
+                "trend": indicators.get("trend", "Neutral"),
+                "regime": indicators.get("regime", "Breakout"),
+                "profit": 1 if s.get("score", 0) > 70 else 0,
+            })
 
-                filename = os.path.join(TRADE_EXPORT_PATH, f"{trade_dict['id']}_{trade_dict['symbol']}.json")
-                with open(filename, "w") as f:
-                    json.dump(trade_dict, f, indent=2, default=str)
-                count += 1
-            except Exception as e:
-                print(f"[ML] ⚠️ Failed to export trade: {e}")
+        print(f"[ML] ✅ Loaded {len(combined)} total training records from DB.")
+        return combined
 
-        print(f"[ML] ✅ Exported {count} trades to {TRADE_EXPORT_PATH}")
-
-    def load_all_trades_from_exports(self) -> list:
-        all_trades = []
-
-        trade_files = [f for f in os.listdir(TRADE_EXPORT_PATH) if f.endswith(".json")]
-        for file in trade_files:
-            try:
-                with open(os.path.join(TRADE_EXPORT_PATH, file)) as f:
-                    trade = json.load(f)
-                    all_trades.append(trade)
-            except Exception as e:
-                print(f"[ML] ⚠️ Failed to load trade {file}: {e}")
-
-        signal_files = [f for f in os.listdir(SIGNAL_EXPORT_PATH) if f.endswith(".json")]
-        for file in signal_files:
-            try:
-                with open(os.path.join(SIGNAL_EXPORT_PATH, file)) as f:
-                    signal = json.load(f)
-                    trade = {
-                        "symbol": signal.get("symbol"),
-                        "entry": signal.get("entry"),
-                        "tp": signal.get("tp"),
-                        "sl": signal.get("sl"),
-                        "trail": signal.get("trail", 0),
-                        "score": signal.get("score"),
-                        "confidence": signal.get("confidence"),
-                        "side": signal.get("side"),
-                        "trend": signal.get("trend"),
-                        "regime": signal.get("regime", "Breakout"),
-                        "profit": 1 if signal.get("score", 0) > 70 else 0
-                    }
-                    if all(k in trade and trade[k] is not None for k in ["entry", "tp", "sl", "score", "confidence", "side", "trend"]):
-                        all_trades.append(trade)
-            except Exception as e:
-                print(f"[ML] ⚠️ Failed to load signal {file}: {e}")
-
-        print(f"[ML] ✅ Loaded {len(all_trades)} combined trades for training.")
-        return all_trades
-
-    def train_from_history(self):
-        all_trades = self.load_all_trades_from_exports()
-        df = pd.DataFrame(all_trades)
+    def train_from_db(self):
+        all_data = self.load_data_from_db()
+        df = pd.DataFrame(all_data)
 
         if df.empty or len(df) < 30:
-            print(f"[ML] ❌ Not enough data to train. Found only {len(df)} records.")
+            print(f"[ML] ❌ Not enough data to train. Found only {len(df)} rows.")
             return
 
-        df["side_enc"] = df["side"].map({"LONG": 1, "SHORT": 0}).fillna(0).astype(int)
-        df["trend_enc"] = df["trend"].map({"Up": 1, "Down": -1, "Neutral": 0}).fillna(0).astype(int)
-        df["regime_enc"] = df["regime"].map({"Breakout": 1, "Mean": 0}).fillna(0).astype(int)
+        # Encode categorical
+        df["side_enc"] = df["side"].map({"LONG": 1, "SHORT": 0}).fillna(0)
+        df["trend_enc"] = df["trend"].map({"Up": 1, "Down": -1, "Neutral": 0}).fillna(0)
+        df["regime_enc"] = df["regime"].map({"Breakout": 1, "Mean": 0}).fillna(0)
+        df = df.fillna(0)
 
-        required_cols = ["entry", "tp", "sl", "trail", "score", "confidence", "side_enc", "trend_enc", "regime_enc"]
-        if not all(col in df.columns for col in required_cols):
-            print("[ML] ❌ Missing columns. Check your data structure.")
-            return
-
-        X = df[required_cols]
+        feature_columns = ["entry", "tp", "sl", "trail", "score", "confidence", "side_enc", "trend_enc", "regime_enc"]
+        X = df[feature_columns]
         y = df["profit"]
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        if len(y.unique()) < 2:
+            print(f"[ML] ⚠️ Only one class found in target variable. Cannot train binary classifier.")
+            return
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
 
         model = XGBClassifier(
             n_estimators=100,
             max_depth=5,
             learning_rate=0.1,
             use_label_encoder=False,
-            eval_metric="logloss"
+            eval_metric="logloss",
+            random_state=42
         )
-        model.fit(X_train, y_train)
-
-        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-
+        
         try:
+            model.fit(X_train, y_train)
+            os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
             joblib.dump(model, MODEL_PATH)
-            print(f"[ML] ✅ Model saved to {MODEL_PATH}")
-        except Exception as e:
-            print(f"[ML] ❌ Failed to save model: {e}")
+            self.model = model
 
-        self.model = model
-        acc = model.score(X_test, y_test)
-        print(f"[ML] ✅ Trained model on {len(df)} records. Accuracy: {acc:.2%}")
+            acc = model.score(X_test, y_test)
+            train_acc = model.score(X_train, y_train)
+
+            self._last_training_size = len(df)
+
+            print(f"[ML] ✅ Model trained successfully!")
+            print(f"[ML] 📊 Training records: {len(df)}")
+            print(f"[ML] 🎯 Train accuracy: {train_acc:.2%}")
+            print(f"[ML] 🎯 Test accuracy: {acc:.2%}")
+            print(f"[ML] 💾 Model saved to: {MODEL_PATH}")
+            
+        except Exception as e:
+            print(f"[ML] ❌ Training failed: {e}")
+
+    def update_model_with_new_data(self, min_new_records=10):
+        try:
+            total_trades = self.db.get_trades_count()
+            total_signals = self.db.get_signals_count()
+            total_records = total_trades + total_signals
+
+            new_records = total_records - self._last_training_size
+            
+            if new_records >= min_new_records:
+                print(f"[ML] 🔄 Found {new_records} new records. Retraining model...")
+                self.train_from_db()
+                return True
+            else:
+                print(f"[ML] ℹ️ Only {new_records} new records. Minimum {min_new_records} required for retraining.")
+                return False
+                
+        except Exception as e:
+            print(f"[ML] ❌ Failed to update model: {e}")
+            return False
+
+    def get_model_stats(self):
+        stats = {
+            "model_exists": self.model is not None,
+            "model_path": MODEL_PATH,
+            "model_file_exists": os.path.exists(MODEL_PATH)
+        }
+        
+        try:
+            data = self.load_data_from_db()
+            df = pd.DataFrame(data)
+            
+            stats.update({
+                "total_records": len(df),
+                "profitable_records": int(sum(df["profit"])) if not df.empty else 0,
+                "profit_rate": float(sum(df["profit"]) / len(df)) if not df.empty else 0,
+                "trades_count": self.db.get_trades_count(),
+                "signals_count": self.db.get_signals_count()
+            })
+        except Exception as e:
+            stats["error"] = str(e)
+            
+        return stats
 
 
 # === CLI Entrypoint ===
 if __name__ == "__main__":
     ml = MLFilter()
-    ml.migrate_signals_to_json()
-    ml.migrate_trades_to_json()
-    ml.train_from_history()
+    print(f"[ML] 📊 Current model stats: {ml.get_model_stats()}")
+    ml.train_from_db()
