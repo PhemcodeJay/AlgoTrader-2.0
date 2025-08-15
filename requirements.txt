@@ -1,40 +1,33 @@
-aiohttp
-altair
-APScheduler
-ccxt
-colorama
-discord-webhook
-fastapi
-fpdf2
-joblib
-matplotlib
-numpy
-openpyxl
-pandas
-plotly
-psycopg2-binary
-python-binance
-python-dotenv
-python-multipart
-python-telegram-bot
-pytz
-pybit
-reportlab
-requests
-schedule
-scikit-learn
-scipy
-seaborn
-sqlalchemy
-statsmodels
+# Core UI & App
 streamlit
-streamlit-aggrid
 streamlit-autorefresh
+python-dotenv
+requests
+pandas
+numpy
+matplotlib
+plotly
+Pillow
 ta
-tqdm
-uvicorn
-watchdog
-websockets
-xlsxwriter
-xgboost
+
+# PDF & Report Generation
+fpdf
+
+# Market Data
 yfinance
+reportlab # PDF generation
+
+# Bybit SDK
+pybit
+
+# Reddit API
+praw
+
+# Database
+sqlalchemy
+psycopg2-binary
+
+# Machine Learning
+scikit-learn
+joblib
+xgboost

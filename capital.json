@@ -1,16 +1,4 @@
 {
-    "real": {
-        "capital": 0.0,
-        "available": 0.0,
-        "used": 0.0,
-        "start_balance": 0.0,
-        "currency": "USDT"
-    },
-    "virtual": {
-        "capital": 100.0,
-        "available": 100.0,
-        "used": 0.0,
-        "start_balance": 100.0,
-        "currency": "USDT"
-    }
+  "capital": 100.0,
+  "currency": "USD"
 }

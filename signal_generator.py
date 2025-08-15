@@ -1,19 +1,11 @@
 # === FULL SIGNAL SCANNER WITH MULTI-TF FILTERS, MARGIN, AND PDF EXPORT ===
 
-try:
-    from fpdf import FPDF
-except ImportError:
-    FPDF = None
-
+from fpdf import FPDF
 from datetime import datetime, timedelta, timezone
 from time import sleep
 import requests
+import pytz
 import sys
-
-try:
-    import pytz
-except ImportError:
-    pytz = None
 
 # === CONFIGURATION ===
 RISK_PCT = 0.015
@@ -24,54 +16,40 @@ MIN_VOLUME = 1000
 MIN_ATR_PCT = 0.001
 RSI_ZONE = (20, 80)
 INTERVALS = ['15', '60', '240']
-MAX_SYMBOLS = 50
+MAX_SYMBOLS = 100
 
 tz_utc3 = timezone(timedelta(hours=3))
 
 # === PDF GENERATOR ===
-if FPDF:
-    class SignalPDF(FPDF):
-        def header(self):
-            self.set_font("Arial", "B", 10)
-            self.cell(0, 10, "Bybit Futures Multi-TF Signals", 0, 1, "C")
+class SignalPDF(FPDF):
+    def header(self):
+        self.set_font("Arial", "B", 10)
+        self.cell(0, 10, "Bybit Futures Multi-TF Signals", 0, 1, "C")
 
-        def add_signals(self, signals):
-            self.set_font("Courier", size=8)
-            for s in signals:
-                self.set_text_color(0, 0, 0)
-                self.set_font("Courier", "B", 8)
-                self.cell(0, 5, f"==================== {s['Symbol']} ====================", ln=1)
+    def add_signals(self, signals):
+        self.set_font("Courier", size=8)
+        for s in signals:
+            self.set_text_color(0, 0, 0)
+            self.set_font("Courier", "B", 8)
+            self.cell(0, 5, f"==================== {s['Symbol']} ====================", ln=1)
 
-                self.set_font("Courier", "", 8)
-                self.set_text_color(0, 0, 139)
-                self.cell(0, 4, f"TYPE: {s['Type']}    SIDE: {s['Side']}     SCORE: {s['Score']}%", ln=1)
+            self.set_font("Courier", "", 8)
+            self.set_text_color(0, 0, 139)
+            self.cell(0, 4, f"TYPE: {s['Type']}    SIDE: {s['Side']}     SCORE: {s['Score']}%", ln=1)
 
-                self.set_text_color(34, 139, 34)
-                self.cell(0, 4, f"ENTRY: {s['Entry']}   TP: {s['TP']}         SL: {s['SL']}", ln=1)
+            self.set_text_color(34, 139, 34)
+            self.cell(0, 4, f"ENTRY: {s['Entry']}   TP: {s['TP']}         SL: {s['SL']}", ln=1)
 
-                self.set_text_color(139, 0, 0)
-                self.cell(0, 4, f"MARKET: {s['Market']}  BB: {s['BB Slope']}    Trail: {s['Trail']}", ln=1)
+            self.set_text_color(139, 0, 0)
+            self.cell(0, 4, f"MARKET: {s['Market']}  BB: {s['BB Slope']}    Trail: {s['Trail']}", ln=1)
 
-                self.set_text_color(0, 100, 100)
-                self.cell(0, 4, f"QTY: {s['Qty']}  MARGIN: {s['Margin']} USDT  LIQ: {s['Liq']}", ln=1)
+            self.set_text_color(0, 100, 100)
+            self.cell(0, 4, f"QTY: {s['Qty']}  MARGIN: {s['Margin']} USDT  LIQ: {s['Liq']}", ln=1)
 
-                self.set_text_color(0, 0, 0)
-                self.cell(0, 4, f"TIME: {s['Time']}", ln=1)
-                self.cell(0, 4, "=" * 57, ln=1)
-                self.ln(1)
-else:
-    class SignalPDF:
-        def __init__(self):
-            print("FPDF not available, PDF generation disabled")
-        
-        def add_page(self):
-            pass
-        
-        def add_signals(self, signals):
-            pass
-        
-        def output(self, filename):
-            print(f"PDF generation skipped: {filename}")
+            self.set_text_color(0, 0, 0)
+            self.cell(0, 4, f"TIME: {s['Time']}", ln=1)
+            self.cell(0, 4, "=" * 57, ln=1)
+            self.ln(1)
 
 # === FORMATTER ===
 def format_signal_block(s):
@@ -140,7 +118,6 @@ def classify_trend(e9, e21, s20):
     if e9 > e21 > s20: return "Trend"
     if e9 > e21: return "Swing"
     return "Scalp"
-    return "Scalp"
 
 # === SIGNAL ANALYSIS ===
 def analyze(symbol):
@@ -187,8 +164,7 @@ def analyze(symbol):
     opts = [tf['sma20'], tf['ema9'], tf['ema21']]
     entry = min(opts, key=lambda x: abs(x - price))
 
-    side = 'Buy' if sides[0] == 'LONG' else 'Sell'
-
+    side = 'LONG' if sides[0] == 'LONG' else 'SHORT'
     tp = round(entry * (1.015 if side == 'LONG' else 0.985), 6)
     sl = round(entry * (0.985 if side == 'LONG' else 1.015), 6)
     trail = round(entry * (1 - ENTRY_BUFFER_PCT) if side == 'LONG' else entry * (1 + ENTRY_BUFFER_PCT), 6)
@@ -208,29 +184,6 @@ def analyze(symbol):
     score += 0.3 if tf['macd'] and tf['macd'] > 0 else 0
     score += 0.2 if tf['rsi'] < 30 or tf['rsi'] > 70 else 0
     score += 0.2 if bb_dir != "No" else 0
-    score += 0.3 if trend in ["Up", "Bullish"] else 0
-
-    result = {
-        'Symbol': symbol,
-        'Side': side,
-        'Entry': entry,
-        'TP': tp,
-        'SL': sl,
-        'Trail': trail,
-        'Liquidation': liq,
-        'Leverage': LEVERAGE,
-        'Qty': qty,
-        'Margin_USDT': margin_usdt,
-        'Trend': trend,
-        'BB_Direction': bb_dir,
-        'Timeframe': '1h',
-        'Score': round(score * 100, 2),
-        'Confidence': round(score * 100, 2),
-        'Strategy': 'AI_Signal',
-        'Market': 'Bybit'
-    }
-    
-    return result
     score += 0.3 if trend == "Trend" else 0.1
 
     return {
@@ -242,7 +195,7 @@ def analyze(symbol):
         'TP': tp,
         'SL': sl,
         'Trail': trail,
-        'margin_usdt': margin_usdt,
+        'Margin': margin_usdt,
         'Qty': qty,
         'Market': price,
         'Liq': liq,

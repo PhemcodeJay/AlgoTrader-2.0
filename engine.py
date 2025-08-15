@@ -1,30 +1,18 @@
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 import os
-import sys
-import pandas as pd
 import time
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from dotenv import load_dotenv
-from typing import Any, List, Union
+
 import db
 import signal_generator
-from signal_generator import get_usdt_symbols, analyze
+from signal_generator import get_usdt_symbols, analyze 
 from bybit_client import BybitClient
 from ml import MLFilter
 from utils import send_discord_message, send_telegram_message, serialize_datetimes
-from sqlalchemy import (
-    create_engine, String, Integer, Float, DateTime, Boolean, JSON, text, update
-)
-from sqlalchemy.orm import (
-    declarative_base, sessionmaker, Session, Mapped, mapped_column
-)
-
-
-# Load environment variables
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -40,8 +28,6 @@ class TradingEngine:
         self.db = db.db
         self.ml = MLFilter()
         self.signal_generator = signal_generator
-        self.capital_file = "capital.json"
-        self.logger = logger # Added for consistency in error logging
 
     def get_settings(self):
         scan_interval = self.db.get_setting("SCAN_INTERVAL")
@@ -56,57 +42,6 @@ class TradingEngine:
 
     def reset_to_defaults(self):
         self.db.reset_all_settings_to_defaults()
-
-    def get_ohlcv(self, symbol: str, timeframe: str, limit: int):
-        """Get OHLCV data for charting"""
-        try:
-            # This should fetch from your data provider
-            # For now, return None to indicate no data available
-            return None
-        except Exception as e:
-            self.logger.error(f"Error getting OHLCV for {symbol}: {e}")
-            return None
-
-    def get_usdt_symbols(self):
-        """Get list of USDT trading pairs"""
-        try:
-            symbols = self.client.get_symbols()
-            usdt_symbols = [s["symbol"] for s in symbols if s["symbol"].endswith("USDT")]
-            return usdt_symbols[:50]  # Return top 50 symbols
-        except Exception as e:
-            self.logger.error(f"Error getting USDT symbols: {e}")
-            return ["BTCUSDT", "ETHUSDT", "ADAUSDT", "SOLUSDT", "XRPUSDT"]
-
-
-    def apply_pnl_to_capital(self, trade: dict):
-        """
-        Apply the PnL of a closed trade to the appropriate capital (real or virtual).
-        """
-        if not trade:
-            logger.warning("[Engine] apply_pnl_to_capital: Empty trade data.")
-            return
-
-        pnl = trade.get("pnl")
-        if pnl is None:
-            logger.warning("[Engine] apply_pnl_to_capital: Trade has no PnL.")
-            return
-
-        mode = "virtual" if trade.get("virtual", False) else "real"
-
-        try:
-            capital = self.load_capital(mode)
-            capital_before = capital.get("capital", 0.0)
-            capital["capital"] = capital_before + float(pnl)
-            self.save_capital(mode, capital)
-
-            logger.info(
-                f"[Engine] 💰 Updated {mode.upper()} capital: "
-                f"{capital_before:.2f} → {capital['capital']:.2f} "
-                f"(PnL: {pnl:.2f})"
-            )
-        except Exception as e:
-            logger.error(f"[Engine] Failed to update capital for {mode.upper()}: {e}")
-
 
     def save_signal_pdf(self, signals: list[dict]):
         if not signals:
@@ -201,29 +136,12 @@ class TradingEngine:
         scan_interval, top_n_signals = self.get_settings()
         signals = []
         trades = []
-        symbols = self.get_usdt_symbols() # Changed to use the new method
+        symbols = get_usdt_symbols()
 
         for symbol in symbols:
-            enhanced = None
-            raw = None
-
-            # Step 1: Analyze signal
-            try:
-                raw = analyze(symbol)
-            except Exception as e:
-                print(f"[Engine] ❌ Failed to analyze {symbol}: {e}")
-                continue
-
-            if not raw:
-                continue  # Skip empty signal
-
-            # Step 2: Enhance signal
-            try:
+            raw = analyze(symbol)
+            if raw:
                 enhanced = self.ml.enhance_signal(raw)
-
-                enhanced["leverage"] = enhanced.get("leverage", 20)
-                enhanced["margin_usdt"] = enhanced.get("margin_usdt") or 5.0
-
                 print(
                     f"✅ ML Signal: {enhanced.get('Symbol')} "
                     f"({enhanced.get('Side')} @ {enhanced.get('Entry')}) → "
@@ -238,7 +156,7 @@ class TradingEngine:
                     "signal_type": enhanced.get("Side", ""),
                     "score": enhanced.get("score", 0.0),
                     "indicators": indicators_clean,
-                    "strategy": enhanced.get("strategy", "Auto"),
+                    "strategy": enhanced.get("strategy", "Default"),
                     "side": enhanced.get("Side", "LONG"),
                     "sl": enhanced.get("SL"),
                     "tp": enhanced.get("TP"),
@@ -252,19 +170,12 @@ class TradingEngine:
                 self.post_signal_to_discord(enhanced)
                 self.post_signal_to_telegram(enhanced)
                 signals.append(enhanced)
+            time.sleep(0.2)
 
-                time.sleep(0.2)
-
-            except Exception as e:
-                print(f"[Engine] ❌ Error enhancing signal for {symbol}: {e}")
-                continue
-
-        # Step 3: Handle no signal case
         if not signals:
             print("[Engine] ⚠️ No tradable signals found.")
             return []
 
-        # Step 4: Execute top trades
         signals.sort(key=lambda x: x.get("score", 0), reverse=True)
         top_signals = signals[:top_n_signals]
 
@@ -282,39 +193,22 @@ class TradingEngine:
                     time_in_force=signal.get("TIF", "GoodTillCancel"),
                 )
             except Exception as e:
-                print(f"[Engine] ❌ Order failed for {signal.get('Symbol')}: {e}")
+                print(f"[Engine] ❌ Order failed: {e}")
                 continue
 
-            if not order or "symbol" not in order:
-                print(f"[Engine] ⚠️ Skipping failed order for {signal.get('Symbol')}: {order}")
-                continue
-
-            # Validate required fields
-            required_order_fields = ["symbol", "side", "qty", "price", "order_id"]
-            required_signal_fields = ["SL", "TP", "leverage", "margin_usdt"]
-            missing_fields = [
-                key for key in required_order_fields if not order.get(key)
-            ] + [
-                key for key in required_signal_fields if not signal.get(key)
-            ]
-
-            if missing_fields:
-                print(f"[Engine] ⚠️ Missing required fields: {missing_fields}")
-                continue
-
-            # Build trade record
+            # ✅ FIXED: Fully structured trade_data
             trade_data = {
                 "symbol": order["symbol"],
                 "side": order["side"],
                 "qty": order["qty"],
                 "entry_price": order["price"],
-                "stop_loss": signal["SL"],
-                "take_profit": signal["TP"],
-                "leverage": signal["leverage"],
-                "margin_usdt": signal["margin_usdt"],
+                "stop_loss": signal.get("SL"),
+                "take_profit": signal.get("TP"),
+                "leverage": signal.get("leverage"),
+                "margin_usdt": signal.get("margin_usdt"),
                 "status": "open",
                 "order_id": order["order_id"],
-                "timestamp": order.get("create_time") or datetime.now(timezone.utc),
+                "timestamp": order.get("create_time", datetime.now(timezone.utc)),
                 "virtual": not is_real,
                 "exit_price": None,
                 "pnl": None,
@@ -325,46 +219,24 @@ class TradingEngine:
             self.post_trade_to_telegram(trade_data)
             trades.append(trade_data)
 
-        # Step 5: Save to PDF
         self.save_signal_pdf(signals)
         self.save_trade_pdf(trades)
 
-        # Step 6: Virtual mode monitor
         if not getattr(self.client, "use_real", False) and hasattr(self.client, "monitor_virtual_orders"):
-            self.client.monitor_virtual_orders()  # type: ignore
+            self.client.monitor_virtual_orders()
 
         return top_signals
 
-
     def run_loop(self):
         print("[Engine] ♻️ Starting scan loop...")
-
-    scan_interval = 3600  # 1 hour in seconds
-
-    while True:
-        try:
-            # Update unrealized PnL before each scan
-            self.client.update_unrealized_pnl()
-
-            # If virtual mode, monitor virtual orders
-            if not getattr(self.client, "use_real", False) and hasattr(self.client, "monitor_virtual_orders"):
-                self.client.monitor_virtual_orders()
-
-            print("\n[Engine] 🚀 Running scan...")
-            self.run_once()
-        except Exception as e:
-            print(f"[Engine] ❌ Error during scan: {e}")
-
-        print(f"[Engine] ⏱️ Countdown to next scan ({scan_interval // 60} minutes):")
-
-        for remaining in range(scan_interval, 0, -1):
-            time_str = str(timedelta(seconds=remaining))
-            sys.stdout.write(f"\r[Engine] ⏳ Time remaining: {time_str} ")
-            sys.stdout.flush()
-            time.sleep(1)
-
-        print("\n[Engine] 🔁 Restarting scan...")
-
+        while True:
+            try:
+                self.run_once()
+            except Exception as e:
+                print(f"[Engine] ❌ Error: {e}")
+            scan_interval, _ = self.get_settings()
+            print(f"[Engine] ⏱️ Sleeping {scan_interval} seconds...\n")
+            time.sleep(scan_interval)
 
     def get_recent_trades(self, limit=10):
         try:
@@ -388,126 +260,38 @@ class TradingEngine:
             print(f"[Engine] ⚠️ get_recent_trades failed: {e}")
             return []
 
-    def get_trades_by_status_and_mode(self, status="open", virtual=None):
+    def load_capital(self) -> dict:
+        if self.client and hasattr(self.client, "get_balance"):
+            try:
+                return self.client.get_balance()
+            except Exception as e:
+                logger.warning(f"[Engine] ⚠️ get_balance failed: {e}")
         try:
-            trades = self.db.get_trades_by_status(status)
-            if virtual is not None:
-                trades = [t for t in trades if t.virtual == virtual]
-            return [
-                {
-                    "symbol": t.symbol,
-                    "side": t.side,
-                    "qty": t.qty,
-                    "entry_price": t.entry_price,
-                    "exit_price": t.exit_price,
-                    "pnl": t.pnl,
-                    "status": t.status,
-                    "order_id": t.order_id,
-                    "timestamp": t.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-                    "virtual": t.virtual
+            with open("capital.json", "r") as f:
+                data = json.load(f)
+                return {
+                    "capital": float(data.get("capital", 100.0)),
+                    "currency": data.get("currency", "USD"),
                 }
-                for t in trades
-            ]
         except Exception as e:
-            logger.error(f"[Engine] Failed to fetch trades: {e}")
-            return []
+            logger.warning(f"[Engine] ⚠️ capital.json missing: {e}")
+            return {"capital": 100.0, "currency": "USD"}
 
-    def load_capital(self, mode: str = "virtual") -> dict:
-        """Load capital from JSON file."""
-        if not os.path.exists(self.capital_file):
-            # Initialize if missing
-            initial_data = {
-                "real": {
-                    "capital": 0.0,
-                    "start_balance": 0.0,
-                    "currency": "USD"
-                },
-                "virtual": {
-                    "capital": 100.0,
-                    "start_balance": 100.0,
-                    "currency": "USD"
-                }
-            }
-            self._save_all_capital(initial_data)
+    def get_daily_pnl(self):
+        if hasattr(self.db, "get_daily_pnl_pct"):
+            return self.db.get_daily_pnl_pct()
+        return None
 
-        with open(self.capital_file, "r") as f:
-            all_capital = json.load(f)
+    def calculate_win_rate(self, trades):
+        if not trades:
+            return 0.0
 
-        if mode.lower() == "all":
-            return all_capital
-        return all_capital.get(mode.lower(), {})
-
-    def save_capital(self, mode: str, data: dict):
-        """Update capital JSON file for a specific mode."""
-        mode = mode.lower()
-        if mode not in ["real", "virtual"]:
-            raise ValueError("Mode must be 'real' or 'virtual'.")
-
-        # Load existing
-        all_capital = {}
-        if os.path.exists(self.capital_file):
-            with open(self.capital_file, "r") as f:
-                all_capital = json.load(f)
-
-        # Update mode section
-        all_capital[mode] = {
-            "capital": data.get("capital", 0.0),
-            "start_balance": data.get("start_balance", 0.0),
-            "currency": data.get("currency", "USD")
-        }
-
-        # Save back
-        self._save_all_capital(all_capital)
-
-    def _save_all_capital(self, data: dict):
-        """Write entire capital.json"""
-        with open(self.capital_file, "w") as f:
-            json.dump(data, f, indent=4)
-
-
-    def get_daily_pnl(self, mode="real") -> float:
-        trades = []
-        if mode == "real":
-            trades = self.get_closed_real_trades()
-        elif mode == "virtual":
-            trades = self.get_closed_virtual_trades()
-        else:
-            trades = self.get_closed_real_trades() + self.get_closed_virtual_trades()
-
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        def get_attr(t, attr, default=None):
-            if isinstance(t, dict):
-                return t.get(attr, default)
-            return getattr(t, attr, default)
-
-        daily_pnl = sum(
-            float(get_attr(t, "pnl", 0.0) or 0.0)
-            for t in trades
-            if isinstance(get_attr(t, "timestamp"), str) and get_attr(t, "timestamp", "").startswith(today)
-        )
-
-        return daily_pnl
-
-
-    def calculate_win_rate(self, trades: List[Union[dict, Any]]) -> float:
-        def get_pnl(trade: Union[dict, Any]) -> Union[float, int, None]:
-            if isinstance(trade, dict):
-                return trade.get("pnl")
-            return getattr(trade, "pnl", None)
-
-        valid_trades = [t for t in trades if isinstance(get_pnl(t), (int, float))]
+        valid_trades = [t for t in trades if isinstance(t.get('pnl'), (int, float))]
         if not valid_trades:
             return 0.0
 
-        wins = []
-        for t in valid_trades:
-            pnl = get_pnl(t)
-            if isinstance(pnl, (int, float)) and pnl > 0:
-                wins.append(t)
-
-        return round(len(wins) / len(valid_trades) * 100, 2)
-
+        wins = sum(1 for t in valid_trades if t['pnl'] > 0)
+        return round((wins / len(valid_trades)) * 100, 2)
 
     def calculate_trade_statistics(self, trades):
         if not trades:
@@ -527,9 +311,8 @@ class TradingEngine:
         losses = 0
 
         for t in trades:
-            pnl = getattr(t, 'pnl', None)
-            duration = getattr(t, 'duration_minutes', 0)
-
+            pnl = t.get("pnl")
+            duration = t.get("duration_minutes", 0)
 
             if isinstance(pnl, (int, float)):
                 total_pnl += pnl
@@ -556,6 +339,7 @@ class TradingEngine:
             "average_duration_minutes": round(avg_duration, 2)
         }
 
+
     @property
     def default_settings(self):
         return {
@@ -563,74 +347,6 @@ class TradingEngine:
             "TOP_N_SIGNALS": int(self.db.get_setting("TOP_N_SIGNALS") or DEFAULT_TOP_N_SIGNALS),
             "MAX_LOSS_PCT": float(self.db.get_setting("MAX_LOSS_PCT") or -5.0),
         }
-
-    def get_symbols(self):
-        return self.client.get_symbols()
-
-    def get_open_virtual_trades(self):
-        try:
-            return self.db.get_open_virtual_trades() or []
-        except Exception as e:
-            self.logger.error(f"Error getting open virtual trades: {e}")
-            return []
-
-    def get_open_real_trades(self):
-        try:
-            return self.db.get_open_real_trades() or []
-        except Exception as e:
-            self.logger.error(f"Error getting open real trades: {e}")
-            return []
-
-    def get_closed_virtual_trades(self):
-        try:
-            return self.db.get_closed_virtual_trades() or []
-        except Exception as e:
-            self.logger.error(f"Error getting closed virtual trades: {e}")
-            return []
-
-    def get_closed_real_trades(self):
-        try:
-            return self.db.get_closed_real_trades() or []
-        except Exception as e:
-            self.logger.error(f"Error getting closed real trades: {e}")
-            return []
-
-
-    def get_open_positions(self, mode="all"):
-        if mode == "real":
-            return self.get_open_real_trades()
-        elif mode == "virtual":
-            return self.get_open_virtual_trades()
-        else:
-            return self.get_open_real_trades() + self.get_open_virtual_trades()
-
-    def close_virtual_trade(self, trade_id: str) -> bool:
-        """Close a virtual trade"""
-        return self.client.close_virtual_trade(trade_id)
-
-    def close_real_trade(self, trade_id: str) -> bool:
-        """Close a real trade"""
-        return self.client.close_real_trade(trade_id)
-
-    def close_trade(self, trade_id: str, is_virtual: bool = None) -> bool:
-        """Close a trade (auto-detect mode if not specified)"""
-        if is_virtual is None:
-            # Try to get trade from DB to determine mode
-            try:
-                trade = self.db.get_trade_by_id(trade_id)
-                if trade:
-                    is_virtual = trade.virtual
-                else:
-                    logger.warning(f"Trade {trade_id} not found")
-                    return False
-            except Exception as e:
-                logger.error(f"Failed to determine trade mode for {trade_id}: {e}")
-                return False
-
-        if is_virtual:
-            return self.close_virtual_trade(trade_id)
-        else:
-            return self.close_real_trade(trade_id)
 
 
 # Export singleton

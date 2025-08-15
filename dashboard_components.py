@@ -10,99 +10,23 @@ from typing import cast, List, Dict, Any
 
 
 class DashboardComponents:
-    def __init__(self, engine):
-        self.engine = engine
-
-    def render(self):
-        st.title("AlgoTrader Dashboard")
-
-        # 1. Real Mode Toggle
-        real_mode = self.render_real_mode_toggle()
-
-        # 2. Display Ticker at top if available
-        ticker_data = []
-        if hasattr(self.engine, "get_ticker_data"):
-            ticker_data = self.engine.get_ticker_data()
-        self.render_ticker(ticker_data, position='top')
-
-        # 3. Show Signals Section
-        signals = []
-        if hasattr(self.engine, "get_signals"):
-            signals = self.engine.get_signals()
-
-        st.header("Trading Signals")
-        if signals:
-            for signal in signals:
-                self.display_signal_card(signal)
-            self.display_signals_table(signals)
-        else:
-            self.display_empty_state("No trading signals available.")
-
-        # 4. Trade Filters in sidebar & fetch filtered trades
-        trade_status, trade_mode = self.display_trade_filters()
-        trades = self.get_filtered_trades(trade_status, trade_mode)
-
-        # 5. Display Trades Section
-        st.header("Trades")
-        if trades:
-            self.display_trades_table(trades)
-
-            # 6. Show trade statistics if available
-            stats = {}
-            if hasattr(self.engine, "get_trade_statistics"):
-                stats = self.engine.get_trade_statistics()
-            if stats:
-                self.display_trade_statistics(stats)
-
-            # 7. Portfolio performance chart
-            fig_perf = self.create_portfolio_performance_chart(trades)
-            st.plotly_chart(fig_perf, use_container_width=True)
-
-            # 8. Detailed performance chart
-            fig_detail = self.create_detailed_performance_chart(trades)
-            st.plotly_chart(fig_detail, use_container_width=True)
-
-        else:
-            self.display_empty_state("No trades found for the selected filters.")
-
-
-    def render_real_mode_toggle(self):
-        real_mode = st.checkbox(
-            "✅ Enable Real Bybit Trading",
-            value=os.getenv("USE_REAL_TRADING", "false").lower() == "true"
-        )
-        os.environ["USE_REAL_TRADING"] = str(real_mode).lower()
-        db_manager.set_setting("real_trading", str(real_mode).lower())
-        return real_mode
+    def __init__(self):
+        pass
 
     def display_signal_card(self, signal):
         col1, col2 = st.columns([2, 1])
-
-        try:
-            entry = round(float(signal.get('entry_price') or signal.get('entry') or 0), 4)
-        except (TypeError, ValueError):
-            entry = 0.0
-
-        try:
-            tp = round(float(signal.get('tp_price') or signal.get('tp') or 0), 4)
-        except (TypeError, ValueError):
-            tp = 0.0
-
-        try:
-            sl = round(float(signal.get('sl_price') or signal.get('sl') or 0), 4)
-        except (TypeError, ValueError):
-            sl = 0.0
-
+        
+        entry = signal.get('entry_price') or signal.get('entry') or 0
+        tp = signal.get('tp_price') or signal.get('tp') or 0
+        sl = signal.get('sl_price') or signal.get('sl') or 0
         leverage = signal.get('leverage', 20)
         margin_usdt = signal.get('margin_usdt')
-        try:
-            confidence = round(float(signal.get('score', 0)), 1)
-        except (TypeError, ValueError):
-            confidence = 0.0
+        confidence = round(float(signal.get('score', 0)), 1)
         strategy = signal.get('strategy') or "N/A"
         symbol = signal.get('symbol', 'N/A')
         side = signal.get('side', 'N/A')
 
+        # Format margin safely
         try:
             margin_display = f"${float(margin_usdt):.2f}"
         except (TypeError, ValueError):
@@ -122,12 +46,14 @@ class DashboardComponents:
                 {confidence}% Confidence</div>
             """, unsafe_allow_html=True)
 
+
+
     def display_signals_table(self, signals):
         def safe_get(signal, key, default=0.0):
             val = signal.get(key)
             if val is None:
                 val = signal.get(key.replace('_price', ''), default)
-            return val or default
+            return val
 
         df = pd.DataFrame([{
             'Symbol': s.get('symbol', 'N/A'),
@@ -139,85 +65,27 @@ class DashboardComponents:
             'Confidence': f"{s.get('score', 0)}%",
             'Leverage': f"{s.get('leverage', 20)}x",
             'Qty': f"{s.get('qty', 0):,.2f}",
-            'Margin (USDT)': f"${s.get('margin_usdt', 5):.2f}",
+            'Margin USDT': f"${s.get('margin_usdt', 0):.2f}",
             'Trend': s.get('trend', 'N/A'),
             'Timestamp': s.get('timestamp', 'N/A')
         } for s in signals])
         st.dataframe(df, use_container_width=True, height=400)
 
-    def display_trade_filters(self):
-        st.sidebar.header("Trade Filters")
-        trade_mode = st.sidebar.selectbox("Trade Mode", ["All", "Real", "Virtual"])
-        trade_status = st.sidebar.selectbox("Trade Status", ["All", "Open", "Closed"])
-        return trade_status, trade_mode
-
-    def get_filtered_trades(self, trade_status, trade_mode):
-        if trade_status == "Open" and trade_mode == "Real":
-            return self.engine.get_open_real_trades()
-        elif trade_status == "Open" and trade_mode == "Virtual":
-            return self.engine.get_open_virtual_trades()
-        elif trade_status == "Closed" and trade_mode == "Real":
-            return self.engine.get_closed_real_trades()
-        elif trade_status == "Closed" and trade_mode == "Virtual":
-            return self.engine.get_closed_virtual_trades()
-        elif trade_status == "Open":
-            return self.engine.get_open_real_trades() + self.engine.get_open_virtual_trades()
-        elif trade_status == "Closed":
-            return self.engine.get_closed_real_trades() + self.engine.get_closed_virtual_trades()
-        else:
-            return (
-                self.engine.get_open_real_trades()
-                + self.engine.get_open_virtual_trades()
-                + self.engine.get_closed_real_trades()
-                + self.engine.get_closed_virtual_trades()
-            )
-
     def display_trades_table(self, trades):
-        def format_timestamp(ts):
-            if not ts:
-                return "N/A"
-            try:
-                if isinstance(ts, str):
-                    return ts
-                return ts.strftime('%Y-%m-%d %H:%M:%S')
-            except Exception:
-                return str(ts)
-
-        df = pd.DataFrame([
-            {
-                'Symbol': getattr(t, 'symbol', 'N/A'),
-                'Side': getattr(t, 'side', 'N/A'),
-                'Entry': f"${getattr(t, 'entry_price', 0):.2f}" if getattr(t, 'entry_price', None) is not None else "N/A",
-                'Exit': f"${getattr(t, 'exit_price', 0):.2f}" if getattr(t, 'exit_price', None) is not None else "N/A",
-                'Qty': f"{getattr(t, 'qty', 0):,.2f}" if getattr(t, 'qty', None) is not None else "N/A",
-                'Leverage': f"{getattr(t, 'leverage', 'N/A')}x" if getattr(t, 'leverage', None) is not None else "N/A",
-                'Margin (USDT)': f"${getattr(t, 'margin_usdt', 0):.2f}" if getattr(t, 'margin_usdt', None) is not None else "N/A",
-                'P&L': (
-                    f"{'🟢' if getattr(t, 'pnl', 0) > 0 else '🔴'} ${getattr(t, 'pnl', 0):.2f}"
-                    if getattr(t, 'pnl', None) is not None else "N/A"
-                ),
-                'Status': getattr(t, 'status', 'N/A'),
-                'Strategy': getattr(t, 'strategy', 'N/A'),
-                'Virtual': '✅' if getattr(t, 'virtual', False) else '❌',
-                'Timestamp': format_timestamp(getattr(t, 'timestamp', None))
-            }
-            for t in trades
-        ])
-
+        df = pd.DataFrame([{
+            'Symbol': t.get('symbol'),
+            'Side': t.get('side'),
+            'Entry': f"${t.get('entry', 0):.2f}",
+            'Exit': f"${t.get('exit', 0):.2f}",
+            'Qty': f"{t.get('qty', 0):,.2f}",
+            'Leverage': f"{t.get('leverage', 20)}x",
+            'Margin USDT': f"${t.get('margin_usdt', 0):.2f}",
+            'P&L': f"{'🟢' if float(t.get('pnl') or 0) > 0 else '🔴'} ${float(t.get('pnl') or 0):.2f}",
+            'Duration': t.get('duration', 'N/A'),
+            'Strategy': t.get('strategy', 'N/A'),
+            'Timestamp': t.get('timestamp')
+        } for t in trades])
         st.dataframe(df, use_container_width=True, height=400)
-
-
-    def calculate_duration(self, trade):
-        try:
-            if getattr(trade, 'exit_price', None) is not None:
-                delta = datetime.now(timezone.utc) - getattr(trade, 'timestamp', datetime.now(timezone.utc))
-                return str(delta).split('.')[0]  # 'HH:MM:SS'
-        except Exception:
-            pass
-        return "Active"
-
-    def display_empty_state(self, message: str):
-        st.info(message)
 
     def display_trade_statistics(self, stats):
         col1, col2, col3 = st.columns(3)
@@ -235,22 +103,22 @@ class DashboardComponents:
         if not trades:
             return go.Figure()
 
-        pnl_data, dates = [], []
+        pnl_data, dates = []
         cumulative = float(start_balance)
 
         for t in trades:
-            pnl = float(getattr(t, 'pnl', 0) or 0)
+            raw_pnl = t.get('pnl', 0)
+
+            try:
+                pnl = float(raw_pnl) if not isinstance(raw_pnl, dict) else 0.0
+            except (ValueError, TypeError):
+                pnl = 0.0
+
             cumulative += pnl
             pnl_data.append(cumulative)
 
             try:
-                timestamp = getattr(t, 'timestamp', None)
-                if isinstance(timestamp, str):
-                    dt = datetime.fromisoformat(timestamp)
-                elif isinstance(timestamp, datetime):
-                    dt = timestamp
-                else:
-                    raise ValueError("Invalid timestamp type")
+                dt = datetime.fromisoformat(t.get('timestamp', ''))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
             except Exception:
@@ -259,7 +127,9 @@ class DashboardComponents:
             dates.append(dt)
 
         fig = go.Figure(go.Scatter(
-            x=dates, y=pnl_data, mode='lines+markers',
+            x=dates,
+            y=pnl_data,
+            mode='lines+markers',
             line=dict(color='#00d4aa', width=2)
         ))
         fig.update_layout(
@@ -277,9 +147,8 @@ class DashboardComponents:
 
         cumulative, daily_pnl, dates = [], [], []
         running_total = start_balance
-
         for t in trades:
-            pnl = float(getattr(t, 'pnl', 0) or 0)
+            pnl = float(t.get('pnl') or 0)
             running_total += pnl
             cumulative.append(running_total)
             daily_pnl.append(pnl)
@@ -291,10 +160,8 @@ class DashboardComponents:
             except Exception:
                 dates.append(datetime.now(timezone.utc))
 
-        fig = make_subplots(
-            rows=2, cols=1, row_heights=[0.7, 0.3], vertical_spacing=0.05,
-            subplot_titles=['Cumulative P&L', 'Daily P&L']
-        )
+        fig = make_subplots(rows=2, cols=1, row_heights=[0.7, 0.3], vertical_spacing=0.05,
+                            subplot_titles=['Cumulative P&L', 'Daily P&L'])
 
         fig.add_trace(go.Scatter(x=dates, y=cumulative, mode='lines+markers', name='Equity',
                                  line=dict(color='lime')), row=1, col=1)
@@ -304,114 +171,45 @@ class DashboardComponents:
         fig.update_layout(template='plotly_dark', height=600, showlegend=False)
         return fig
 
-    def create_technical_chart(self, chart_data: List[Dict[str, Any]], symbol: str, indicators: List[str]) -> go.Figure:
+    def create_technical_chart(self, chart_data, symbol, indicators):
         if not chart_data:
             return go.Figure()
 
         df = pd.DataFrame(chart_data)
         df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # 👇 Recalculate all indicators at once
         df = calculate_indicators(cast(List[Dict[str, Any]], df.to_dict(orient='records')))
 
-        has_rsi = "RSI" in indicators and "RSI" in df.columns
-        has_macd = "MACD" in indicators and "MACD_line" in df.columns
-        has_stoch = "Stoch RSI" in indicators and "Stoch_K" in df.columns
+        close = df['close'].tolist()
+        open_ = df['open'].tolist()
 
-        rows = 2 + sum([has_rsi, has_macd, has_stoch])
-        subplot_titles = [f'{symbol} Price', 'Volume']
-        if has_rsi: subplot_titles.append("RSI")
-        if has_macd: subplot_titles.append("MACD")
-        if has_stoch: subplot_titles.append("Stoch RSI")
+        fig = make_subplots(rows=3, cols=1, row_heights=[0.6, 0.2, 0.2], vertical_spacing=0.03,
+                            subplot_titles=(f'{symbol} Price Chart', 'Volume', 'RSI'))
 
-        fig = make_subplots(
-            rows=rows,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.03,
-            row_heights=[0.5] + [0.12] * (rows - 1),
-            subplot_titles=subplot_titles
-        )
-
-        row_idx = 1
-
-        # Candlestick
         fig.add_trace(go.Candlestick(
-            x=df['timestamp'],
-            open=df['open'],
-            high=df['high'],
-            low=df['low'],
-            close=df['close'],
-            name="Candles",
-            increasing_line_color='lime',
-            decreasing_line_color='red'
-        ), row=row_idx, col=1)
+            x=df['timestamp'], open=df['open'], high=df['high'],
+            low=df['low'], close=df['close'], name="Candles"), row=1, col=1)
 
-        # Overlay indicators
-        if "EMA 9" in indicators and "EMA_9" in df.columns:
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['EMA_9'], name="EMA 9", line=dict(color='cyan')), row=row_idx, col=1)
-        if "EMA 21" in indicators and "EMA_21" in df.columns:
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['EMA_21'], name="EMA 21", line=dict(color='orange')), row=row_idx, col=1)
-        if "MA 50" in indicators and "MA_50" in df.columns:
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['MA_50'], name="MA 50", line=dict(color='blue')), row=row_idx, col=1)
-        if "MA 200" in indicators and "MA_200" in df.columns:
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['MA_200'], name="MA 200", line=dict(color='white')), row=row_idx, col=1)
+        if 'EMA 9' in indicators and 'EMA_21' in df:
+            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['EMA_21'], name="EMA 21", line=dict(color='orange')), row=1, col=1)
 
-        if "Bollinger Bands" in indicators and "BB_upper" in df.columns:
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['BB_upper'], name="BB Upper", line=dict(color='gray', dash='dot')), row=row_idx, col=1)
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['BB_lower'], name="BB Lower", line=dict(color='gray', dash='dot')), row=row_idx, col=1)
+        if 'EMA 21' in indicators and 'EMA_50' in df:
+            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['EMA_50'], name="EMA 50", line=dict(color='blue')), row=1, col=1)
 
-        # Volume
-        row_idx += 1
-        bar_colors = ['green' if c >= o else 'red' for c, o in zip(df['close'], df['open'])]
-        fig.add_trace(go.Bar(x=df['timestamp'], y=df['volume'], name="Volume", marker_color=bar_colors), row=row_idx, col=1)
+        if 'Bollinger Bands' in indicators and 'BB_upper' in df:
+            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['BB_upper'], name="BB Upper", line=dict(color='gray', dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['BB_lower'], name="BB Lower", line=dict(color='gray', dash='dot')), row=1, col=1)
 
-        # RSI
-        if has_rsi:
-            row_idx += 1
-            fig.add_trace(go.Scatter(
-                x=df['timestamp'], y=df['RSI'],
-                name="RSI", line=dict(color='purple')
-            ), row=row_idx, col=1)
+        bar_colors = ['green' if c > o else 'red' for c, o in zip(df['close'], df['open'])]
+        fig.add_trace(go.Bar(x=df['timestamp'], y=df['volume'], marker_color=bar_colors), row=2, col=1)
 
-            fig.add_shape(
-                type="line",
-                x0=df['timestamp'].min(), x1=df['timestamp'].max(),
-                y0=70, y1=70,
-                line=dict(color="red", dash="dash"),
-                xref=f'x{row_idx}' if row_idx > 1 else 'x',
-                yref=f'y{row_idx}' if row_idx > 1 else 'y'
-            )
-            fig.add_shape(
-                type="line",
-                x0=df['timestamp'].min(), x1=df['timestamp'].max(),
-                y0=30, y1=30,
-                line=dict(color="green", dash="dash"),
-                xref=f'x{row_idx}' if row_idx > 1 else 'x',
-                yref=f'y{row_idx}' if row_idx > 1 else 'y'
-            )
+        if 'RSI' in indicators and 'RSI' in df:
+            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['RSI'], name='RSI', line=dict(color='purple')), row=3, col=1)
 
-        # MACD
-        if has_macd:
-            row_idx += 1
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['MACD_line'], name="MACD Line", line=dict(color='cyan')), row=row_idx, col=1)
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['MACD_signal'], name="Signal", line=dict(color='orange', dash='dot')), row=row_idx, col=1)
-            fig.add_trace(go.Bar(x=df['timestamp'], y=df['MACD_hist'], name="Histogram", marker_color='lightgray'), row=row_idx, col=1)
-
-        # Stoch RSI
-        if has_stoch:
-            row_idx += 1
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['Stoch_K'], name="Stoch %K", line=dict(color='magenta')), row=row_idx, col=1)
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['Stoch_D'], name="Stoch %D", line=dict(color='yellow')), row=row_idx, col=1)
-
-        fig.update_layout(
-            template='plotly_dark',
-            height=300 + rows * 200,
-            margin=dict(l=30, r=30, t=50, b=30),
-            showlegend=True,
-            xaxis_rangeslider_visible=False,
-            xaxis=dict(type='date')
-        )
-
+        fig.update_layout(template='plotly_dark', height=700)
         return fig
+
 
     def render_ticker(self, ticker_data, position='top'):
         if not ticker_data:
@@ -419,35 +217,44 @@ class DashboardComponents:
 
         def format_volume(val):
             if val >= 1_000_000_000:
-                return f"${val / 1_000_000_000:.1f}B"
+                return f"{val / 1_000_000_000:.1f}B"
             elif val >= 1_000_000:
-                return f"${val / 1_000_000:.1f}M"
+                return f"{val / 1_000_000:.1f}M"
             elif val >= 1_000:
-                return f"${val / 1_000:.1f}K"
+                return f"{val / 1_000:.1f}K"
             else:
-                return f"${val:.2f}"
+                return f"{val:.2f}"
 
         cleaned = []
         for item in ticker_data:
             try:
-                symbol = item.get('symbol', 'N/A')
-                price = float(item.get('lastPrice') or 0)
-                change = float(item.get('price24hPcnt') or 0) * 100
-                volume = float(item.get("turnover24h") or item.get("volume24h") or 0)
+                symbol = item.get('symbol')
+                price = float(item.get('lastPrice', 0))
+                change = float(item.get('price24hPcnt', 0)) * 100
+                volume = float(item.get('turnover24h') or item.get('volume24h') or 0)
                 cleaned.append({'symbol': symbol, 'price': price, 'change': change, 'volume': volume})
-            except (ValueError, TypeError):
+            except:
                 continue
 
-        top_20 = sorted(cleaned, key=lambda x: x['volume'], reverse=True)[:20]
+        top_50 = sorted(cleaned, key=lambda x: x['volume'], reverse=True)[:50]
         ticker_html = " | ".join([
-            f"<span style='color:{'green' if item['change'] > 0 else 'red'}; font-weight:bold'>{item['symbol']}: {item['price']:.2f} ({item['change']:+.2f}%)</span>"
-            for item in top_20
+            f"<b>{x['symbol']}</b>: ${x['price']:.6f} "
+            f"(<span style='color:{'#00cc66' if x['change'] > 0 else '#ff4d4d'}'>{x['change']:.2f}%</span>) "
+            f"Vol: {format_volume(x['volume'])}"
+            for x in top_50
         ])
 
-        st.markdown(f"""
-            <marquee behavior="scroll" direction="left" scrollamount="6" style="color: white; background-color: #111; padding: 5px; border-radius: 8px;">
-                {ticker_html}
-            </marquee>
-        """, unsafe_allow_html=True)
+        if ticker_html:
+            st.markdown(f"""
+                <div style='position: fixed; {position}: 0; left: 0; width: 100%; background-color: #111; 
+                color: white; padding: 10px; font-family: monospace; font-size: 16px; 
+                white-space: nowrap; overflow: hidden; z-index: 9999;' >
+                    <marquee>{ticker_html}</marquee>
+                </div>
+            """, unsafe_allow_html=True)
 
-    
+    def render_real_mode_toggle(self):
+        real_mode = st.checkbox("✅ Enable Real Bybit Trading", value=os.getenv("USE_REAL_TRADING", "false") == "true")
+        os.environ["USE_REAL_TRADING"] = str(real_mode).lower()
+        db_manager.set_setting("real_trading", str(real_mode).lower())
+        return real_mode

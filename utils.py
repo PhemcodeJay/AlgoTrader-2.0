@@ -76,15 +76,11 @@ def score_signal(df: pd.DataFrame) -> float:
     return round(score / 5 * 100, 2)
 
 
-def format_currency(value):
-    try:
-        return f"{float(value):,.2f}"
-    except (ValueError, TypeError):
-        return "0.00"
+def format_currency(value: Optional[float]) -> str:
+    if value is None:
+        value = 0.0
+    return f"${value:,.2f}"
 
-def get_trade_attr(trade, key, default=None):
-    """Safely get attribute from object or dict."""
-    return getattr(trade, key, default) if hasattr(trade, key) else trade.get(key, default)
 
 def format_percentage(value: Optional[float]) -> str:
     if value is None:
@@ -232,19 +228,19 @@ def serialize_datetimes(obj):
 def validate_trading_parameters(tp_pct, sl_pct, leverage):
     """Validate trading parameters"""
     errors = []
-
+    
     if tp_pct <= 0:
         errors.append("Take profit percentage must be positive")
-
+    
     if sl_pct <= 0:
         errors.append("Stop loss percentage must be positive")
-
+    
     if leverage < 1 or leverage > 50:
         errors.append("Leverage must be between 1 and 50")
-
+    
     if tp_pct <= sl_pct:
         errors.append("Take profit should be greater than stop loss")
-
+    
     return errors
 
 def calculate_position_size(capital, risk_pct, entry_price, sl_price):
@@ -252,13 +248,13 @@ def calculate_position_size(capital, risk_pct, entry_price, sl_price):
     try:
         risk_amount = capital * (risk_pct / 100)
         risk_per_unit = abs(entry_price - sl_price)
-
+        
         if risk_per_unit <= 0:
             return 0
-
+        
         position_size = risk_amount / risk_per_unit
         return round(position_size, 6)
-
+    
     except (TypeError, ZeroDivisionError):
         return 0
 
@@ -274,28 +270,3 @@ def get_signal_strength_text(confidence):
         return "⚠️ Weak"
     else:
         return "❌ Very Weak"
-
-
-def format_trades(trades):
-    """Format trades for display"""
-    if not trades:
-        return []
-
-    formatted = []
-    for trade in trades:
-        formatted_trade = {
-            "Symbol": trade.get("symbol", "N/A"),
-            "Side": trade.get("side", "N/A"), 
-            "Entry": f"${trade.get('entry_price', 0):.4f}",
-            "Exit": f"${trade.get('exit_price', 0):.4f}" if trade.get('exit_price') else "N/A",
-            "Qty": f"{trade.get('qty', 0):.4f}",
-            "P&L": f"${trade.get('pnl', 0):.2f}" if trade.get('pnl') else "N/A",
-            "Status": trade.get("status", "N/A").title(),
-            "Virtual": trade.get("virtual", True),
-            "Time": trade.get("timestamp", "N/A"),
-            "Order ID": trade.get("order_id", "N/A"),
-            "id": trade.get("id")
-        }
-        formatted.append(formatted_trade)
-
-    return formatted
