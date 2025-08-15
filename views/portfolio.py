@@ -1,61 +1,78 @@
 import streamlit as st
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from utils import format_trades
 
 def render(trading_engine, dashboard):
+    st.set_page_config(page_title="Wallet Summary", layout="wide")
+    st.image("logo.png", width=80)
     st.title("💼 Wallet Summary")
 
-    # Load capital info
-    balance_info = trading_engine.load_capital()
-    capital = balance_info.get("capital", 0.0)
-    currency = balance_info.get("currency", "USD")
-    start_balance = 100.0  # This could be made dynamic later
+    # =========================
+    # Wallet Overview Cards
+    # =========================
+    try:
+        capital_data = trading_engine.load_capital("all") or {}
+        real, virtual = capital_data.get("real", {}), capital_data.get("virtual", {})
 
-    # All trades from DB (virtual + real)
-    all_trades = trading_engine.get_recent_trades(limit=100)
-
-    # Filter selector
-    selected_mode = st.radio("View Mode", ["All", "Real", "Virtual"], horizontal=True)
-
-    def is_virtual_trade(trade):
-        return trade.get("virtual", False)
-
-    if selected_mode == "Real":
-        trades = [t for t in all_trades if not is_virtual_trade(t)]
-    elif selected_mode == "Virtual":
-        trades = [t for t in all_trades if is_virtual_trade(t)]
-    else:
-        trades = all_trades
-
-    # Total return %
-    total_return_pct = ((capital - start_balance) / start_balance) * 100 if start_balance else 0.0
-
-    # Daily P&L
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    daily_pnl = sum(
-        float(t.get("pnl", 0.0) or 0.0)
-        for t in trades
-        if isinstance(t.get("timestamp"), str) and t["timestamp"].startswith(today)
-    )
-
-    # Metrics
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Current Balance", f"${capital:.2f}", currency)
-    col2.metric("Total Return", f"{total_return_pct:.2f}%")
-    col3.metric("Daily P&L", f"${daily_pnl:.2f}")
-    col4.metric("Win Rate", f"{trading_engine.calculate_win_rate(trades):.2f}%")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("💰 Real Balance", f"${float(real.get('capital', 0.0)):,.2f}")
+        col2.metric("Available Real", f"${float(real.get('available', real.get('capital', 0.0))):,.2f}")
+        col3.metric("🧪 Virtual Balance", f"${float(virtual.get('capital', 0.0)):,.2f}")
+        col4.metric("Available Virtual", f"${float(virtual.get('available', virtual.get('capital', 0.0))):,.2f}")
+    except Exception as e:
+        st.error(f"Error loading wallet data: {e}")
 
     st.markdown("---")
 
-    # Charts and Stats
-    left, right = st.columns([2, 1])
+    # =========================
+    # Tabs: All / Open / Closed Trades
+    # =========================
+    tabs = st.tabs(["🔄 All Trades", "📂 Open Trades", "✅ Closed Trades"])
+    tab_types = ["all", "open", "closed"]
 
+    for idx, trade_type in enumerate(tab_types):
+        with tabs[idx]:
+            render_trades_tab(trading_engine, dashboard, trade_type, idx)
+
+
+def render_trades_tab(trading_engine, dashboard, trade_type, tab_index):
+    """Display trades and metrics for a specific tab."""
+    mode = st.radio("Mode", ["All", "Real", "Virtual"], key=f"mode_{trade_type}", horizontal=True)
+    trades = fetch_trades(trading_engine, trade_type, mode)
+    trades = [ensure_dict(t) for t in trades]
+
+    # Compute trade age safely
+    for t in trades:
+        ts = t.get("timestamp")
+        trade_age = None
+        try:
+            if isinstance(ts, str):
+                ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            elif isinstance(ts, datetime):
+                ts_dt = ts
+            else:
+                ts_dt = None
+
+            if ts_dt is not None:
+                trade_age = (datetime.now(timezone.utc) - ts_dt).total_seconds() / 3600  # hours
+        except Exception:
+            trade_age = None
+
+        t["trade_age"] = trade_age
+
+    # Show KPI metrics
+    capital, available, start_balance, _ = load_capital(trading_engine, mode)
+    display_metrics(trading_engine, trades, capital, available, start_balance, tab_index)
+
+    # Charts and statistics
+    left, right = st.columns([2, 1])
     with left:
-        st.subheader("📈 Assets Analysis")
+        st.subheader("📈 Assets Performance")
         if trades:
             fig = dashboard.create_detailed_performance_chart(trades, capital)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No trade data available for selected mode.")
+            st.info("No trade data available.")
 
     with right:
         st.subheader("📊 Trade Stats")
@@ -63,10 +80,95 @@ def render(trading_engine, dashboard):
             stats = trading_engine.calculate_trade_statistics(trades)
             dashboard.display_trade_statistics(stats)
         else:
-            st.info("No trade data available.")
+            st.info("No stats available.")
 
-    st.subheader("🔄 Recent Trades")
-    if trades:
-        dashboard.display_trades_table(trades)
+    # Trades table with pagination
+    st.markdown("---")
+    st.subheader("🧾 Trades Table")
+    paginated_trades = paginate(trades, f"page_{tab_index}")
+    if trade_type == "open":
+        manage_open_trades(paginated_trades, trading_engine)
     else:
-        st.info("No trades available for selected mode.")
+        dashboard.display_trades_table(paginated_trades)
+
+
+# =========================
+# Helper Functions
+# =========================
+def fetch_trades(trading_engine, trade_type, mode):
+    if trade_type == "all":
+        return trading_engine.get_recent_trades(limit=100) or []
+    if trade_type == "open":
+        return (
+            (trading_engine.get_open_real_trades() or []) + (trading_engine.get_open_virtual_trades() or [])
+            if mode == "All" else trading_engine.get_open_real_trades() if mode == "Real" else trading_engine.get_open_virtual_trades()
+        )
+    if trade_type == "closed":
+        return (
+            (trading_engine.get_closed_real_trades() or []) + (trading_engine.get_closed_virtual_trades() or [])
+            if mode == "All" else trading_engine.get_closed_real_trades() if mode == "Real" else trading_engine.get_closed_virtual_trades()
+        )
+    return []
+
+
+def ensure_dict(trade):
+    if hasattr(trade, "to_dict"):
+        return trade.to_dict()
+    if isinstance(trade, dict):
+        return trade
+    return {attr: getattr(trade, attr, None) for attr in ["symbol", "side", "qty", "entry_price", "exit_price", "pnl", "status", "timestamp", "virtual"]}
+
+
+def load_capital(trading_engine, mode):
+    balances = trading_engine.load_capital("all") if mode == "All" else trading_engine.load_capital(mode.lower())
+    real, virtual = balances.get("real", {}), balances.get("virtual", {})
+    capital = float(real.get("capital", 0.0)) + float(virtual.get("capital", 0.0))
+    available = float(real.get("available", real.get("capital", 0.0))) + float(virtual.get("available", virtual.get("capital", 0.0)))
+    start_balance = float(real.get("start_balance", 0.0)) + float(virtual.get("start_balance", 0.0))
+    currency = real.get("currency") or virtual.get("currency", "USD")
+    return capital, available, start_balance, currency
+
+
+def display_metrics(trading_engine, trades, capital, available, start_balance, tab_index):
+    total_return_pct = ((capital - start_balance) / start_balance * 100) if start_balance else 0.0
+    win_rate = trading_engine.calculate_win_rate(trades)
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    daily_pnl = sum(float(t.get("pnl", 0.0) or 0.0) for t in trades if str(t.get("timestamp", "")).startswith(today_str))
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Capital", f"${capital:,.2f}")
+    col2.metric("Available", f"${available:,.2f}")
+    col3.metric("Total Return", f"{total_return_pct:+.2f}%")
+    col4.metric("Daily P&L", f"${daily_pnl:+.2f}")
+    col5.metric("Win Rate", f"{win_rate:.2f}%")
+
+
+def paginate(trades, key, page_size=10):
+    total_pages = max((len(trades) - 1) // page_size + 1, 1)
+    page_num = st.number_input("Page", min_value=1, max_value=total_pages, step=1, key=key)
+    start, end = (page_num - 1) * page_size, page_num * page_size
+    return trades[start:end]
+
+
+def manage_open_trades(trades, trading_engine):
+    for trade in trades:
+        symbol, side, entry = trade.get("symbol", "N/A"), trade.get("side", "N/A"), trade.get("entry_price", "N/A")
+        qty, sl, tp, pnl = trade.get("qty", 0), trade.get("stop_loss", "N/A"), trade.get("take_profit", "N/A"), trade.get("pnl", 0.0)
+        status, virtual, ts = trade.get("status", "N/A"), trade.get("virtual", False), trade.get("timestamp", "")
+
+        with st.expander(f"{symbol} | {side} | Entry: {entry}"):
+            cols = st.columns(4)
+            cols[0].markdown(f"**Qty:** {qty}")
+            cols[1].markdown(f"**SL:** {sl}")
+            cols[2].markdown(f"**TP:** {tp}")
+            cols[3].markdown(f"**PnL:** {pnl}")
+            st.markdown(f"**Status:** {status} | **Mode:** {'Virtual' if virtual else 'Real'} ⏱ `{ts}`")
+
+            if status.lower() == "open":
+                trade_id = trade.get("order_id")
+                if st.button("❌ Close Trade", key=f"close_{symbol}_{trade_id}_{ts}"):
+                    if trade_id and trading_engine.close_trade(str(trade_id), virtual):
+                        st.success(f"{'Virtual' if virtual else 'Real'} trade closed successfully.")
+                        st.rerun()
+                    else:
+                        st.error("Failed to close trade or trade ID missing.")

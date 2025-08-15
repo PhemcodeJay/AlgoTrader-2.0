@@ -1,68 +1,94 @@
 import streamlit as st
+import pandas as pd
 
 def render(trading_engine, dashboard):
-    st.title("📈 Market Analysis")
+    st.set_page_config(page_title="Market Dashboard", layout="wide")
+    st.image("logo.png", width=80)
+    st.title("📊 Market Overview")
 
-    # Fetch symbols safely from trading_engine client
+    # === Fetch symbols ===
     try:
-        symbol_response = trading_engine.client.get_symbols()
-        if isinstance(symbol_response, dict) and "result" in symbol_response:
-            symbols = [item["name"] for item in symbol_response["result"]]
-        elif isinstance(symbol_response, list):
-            symbols = [item.get("symbol") or item.get("name") for item in symbol_response]
-        else:
-            st.warning("Unexpected symbol format from API.")
-            symbols = []
+        symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
+        if hasattr(trading_engine, 'get_usdt_symbols'):
+            symbols = trading_engine.get_usdt_symbols()
     except Exception as e:
         st.error(f"Error fetching symbols: {e}")
+        symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT", "SOLUSDT"]
+
+    if not symbols:
+        st.info("No symbols available.")
         return
 
-    selected_symbol = st.selectbox("Select Symbol", symbols) if symbols else None
-
-    if not selected_symbol:
-        st.info("No symbols available to select.")
-        return
-
-    # User selects timeframe, candle limit, and indicators
-    col1, col2, col3 = st.columns(3)
+    # === Chart parameters ===
+    col1, col2 = st.columns([1, 3])
     with col1:
         timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=1)
+        limit = st.slider("Candles", min_value=50, max_value=200, value=50)
     with col2:
-        limit = st.slider("Candles", min_value=50, max_value=500, value=100)
-    with col3:
-        indicators = st.multiselect(
-            "Indicators",
-            options=["EMA 9", "EMA 21", "MA 50", "MA 200", "Bollinger Bands",
-                     "RSI", "MACD", "Stoch RSI", "Volume"],
-            default=["Bollinger Bands", "MA 200", "RSI", "Volume"]
-        )
+        st.markdown("### Mini Charts Overview")
+        st.markdown("Quick glance of market movement, ROI, and signals per symbol.")
 
-    # Fetch and render chart data with spinner UI
-    with st.spinner("Loading chart data…"):
-        try:
-            # Prefer get_chart_data if available, else fallback to get_kline
-            if hasattr(trading_engine.client, "get_chart_data"):
-                chart_data = trading_engine.client.get_chart_data(selected_symbol, timeframe, limit)
-            else:
-                chart_data = trading_engine.client.get_kline(selected_symbol, interval=timeframe, limit=limit)
-        except Exception as e:
-            st.error(f"Error fetching chart data: {e}")
-            return
+    # === Mini charts grid ===
+    st.markdown("---")
+    cols_per_row = 3
+    rows = (len(symbols) + cols_per_row - 1) // cols_per_row
 
-        if not chart_data:
-            st.error(f"No chart data returned for {selected_symbol}")
-            return
+    for r in range(rows):
+        cols = st.columns(cols_per_row)
+        for i in range(cols_per_row):
+            idx = r * cols_per_row + i
+            if idx >= len(symbols):
+                break
+            symbol = symbols[idx]
+            col = cols[i]
 
-        # Render the technical chart using dashboard helper
-        fig = dashboard.create_technical_chart(chart_data, selected_symbol, indicators)
-        st.plotly_chart(fig, use_container_width=True)
+            try:
+                # --- Load OHLC data ---
+                data = trading_engine.get_ohlcv(symbol=symbol, timeframe=timeframe, limit=limit)
+                df = pd.DataFrame(data) if not isinstance(data, pd.DataFrame) else data
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                df.dropna(subset=['open', 'high', 'low', 'close'], inplace=True)
 
-        # Show current signals for selected symbol
-        current_signals = [
-            s for s in trading_engine.get_recent_signals()
-            if s.get("symbol") == selected_symbol
-        ]
-        if current_signals:
-            st.subheader(f"🎯 Current Signals for {selected_symbol}")
-            for signal in current_signals:
-                dashboard.display_signal_card(signal)
+                # --- Calculate ROI / PnL (example, last candle change) ---
+                last_close = df['close'].iloc[-1]
+                first_close = df['close'].iloc[0]
+                roi = ((last_close - first_close) / first_close) * 100
+
+                # --- Card styling ---
+                col.markdown(
+                    f"""
+                    <div style='
+                        border-radius: 12px;
+                        padding: 10px;
+                        background-color: #1e1e2f;
+                        margin-bottom: 15px;
+                        box-shadow: 0 3px 12px rgba(0,0,0,0.3);
+                        color: white;
+                    '>
+                        <h4 style='margin: 0'>{symbol}</h4>
+                        <span style='font-size:14px;color:{"#00FF00" if roi>=0 else "#FF4C4C"}'>
+                            ROI: {roi:.2f}%
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                # --- Mini chart ---
+                fig = dashboard.create_technical_chart(
+                    data=df.to_dict("records"),
+                    symbol=symbol,
+                    indicators=["MA 50", "MA 200"],
+                    theme="dark",
+                    layout="compact"
+                )
+                col.plotly_chart(fig, use_container_width=True)
+
+                # --- Display latest signals ---
+                if hasattr(trading_engine, 'get_recent_signals'):
+                    signals = [s for s in trading_engine.get_recent_signals() if s.get("symbol") == symbol]
+                    for signal in signals:
+                        dashboard.display_signal_card(signal)
+
+            except Exception as e:
+                col.error(f"Failed to load {symbol}: {e}")
