@@ -1,114 +1,90 @@
 import streamlit as st
-from db import db_manager
+import pandas as pd
 
-def render():
-    st.image("logo.png", width=80)
-    st.title("🗄️ Database Overview")
+def render(db_manager):
+    st.title("🗄️ Trade Journal")
+    col1, col2, col3 = st.columns(3)
 
-    # --- Tabs ---
-    tabs = st.tabs([
-        "🔍 Database Health",
-        "📊 Record Statistics",
-        "📈 Trade Statistics",
-        "🛠️ System Info",
-        "🔧 DB Operations"
-    ])
+    try:
+        db_balance = db_manager.get_portfolio_balance()
+        col1.metric("Database Status", "🟢 Ok" if db_balance is not None else "🔴 Error")
+    except Exception as e:
+        col1.metric("Database Status", "🔴 Error"); st.error(str(e))
 
-    # --- Database Health Tab ---
-    with tabs[0]:
-        st.subheader("🔍 Database Health")
-        db_health = db_manager.get_db_health()
-        
-        if db_health.get("status") == "ok":
-            st.success("✅ Database connection healthy")
-        else:
-            st.error(f"❌ Database error: {db_health.get('error', 'Unknown error')}")
-            return
+    try:
+        trades = db_manager.get_trades(limit=1000)
+        col2.metric("Total Trades", len(trades))
+    except:
+        col2.metric("Total Trades", "Error")
 
-    # --- Record Statistics Tab ---
-    with tabs[1]:
-        st.subheader("📊 Record Statistics")
-        col1, col2, col3 = st.columns(3)
-        
+    try:
+        signals = db_manager.get_signals(limit=1000, active_only=False)
+        col3.metric("Total Signals", len(signals))
+    except:
+        col3.metric("Total Signals", "Error")
+
+    st.markdown("---")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("📊 Recent Trades")
         try:
-            signals_count = db_manager.get_signals_count()
-            trades_count = db_manager.get_trades_count()
-            portfolio_count = db_manager.get_portfolio_count()
-            
-            col1.metric("Total Signals", signals_count)
-            col2.metric("Total Trades", trades_count)
-            col3.metric("Portfolio Items", portfolio_count)
+            recent = db_manager.get_trades(limit=5)
+            if recent:
+                for t in recent:
+                    pnl_color = "🟢" if t["pnl"] > 0 else "🔴"
+                    st.write(f"{pnl_color} {t['symbol']} - ${t['pnl']:.2f}")
+            else:
+                st.info("No trades in database")
         except Exception as e:
-            st.error(f"Failed to get record counts: {e}")
+            st.error(str(e))
 
-    # --- Trade Statistics Tab ---
-    with tabs[2]:
-        st.subheader("📈 Trade Statistics")
-        left, right = st.columns(2)
-        
-        with left:
-            st.subheader("🟢 Virtual Trades")
-            try:
-                virtual_open = len(db_manager.get_open_virtual_trades())
-                virtual_closed = len(db_manager.get_closed_virtual_trades())
-                st.write(f"**Open:** {virtual_open}")
-                st.write(f"**Closed:** {virtual_closed}")
-            except Exception as e:
-                st.error(f"Virtual trades error: {e}")
-
-        with right:
-            st.subheader("💰 Real Trades")
-            try:
-                real_open = len(db_manager.get_open_real_trades())
-                real_closed = len(db_manager.get_closed_real_trades())
-                st.write(f"**Open:** {real_open}")
-                st.write(f"**Closed:** {real_closed}")
-            except Exception as e:
-                st.error(f"Real trades error: {e}")
-
-    # --- System Info Tab ---
-    with tabs[3]:
+    with right:
         st.subheader("🛠️ System Info")
         try:
-            portfolio = db_manager.get_portfolio()
-            balance = sum(p.capital for p in portfolio) if portfolio else 0.0
-            daily_pnl = db_manager.get_daily_pnl_pct()
+            bal = db_manager.get_portfolio_balance()
+            daily_pnl = db_manager.get_daily_pnl()
             stats = db_manager.get_automation_stats()
-
+            st.write(f"**Wallet:** ${bal:.2f}")
             color = "🟢" if daily_pnl >= 0 else "🔴"
-            st.write(f"**Wallet:** ${balance:.2f}")
-            st.write(f"**Daily P&L:** {color} {daily_pnl:.2f}%")
-            st.write(f"**Total Signals:** {stats.get('total_signals', '—')}")
-            st.write(f"**Open Trades:** {stats.get('open_trades', '—')}")
-            st.write(f"**Last Update:** {stats.get('timestamp', '—')}")
+            st.write(f"**Daily P&L:** {color} ${daily_pnl:.2f}")
+            st.write(f"**Automation Signals:** {stats.get('signals_generated', 0)}")
+            st.write(f"**Automation Trades:** {stats.get('trades_executed', 0)}")
         except Exception as e:
-            st.error(f"System info error: {e}")
+            st.error(str(e))
 
-    # --- DB Operations Tab ---
-    with tabs[4]:
-        st.subheader("🔧 DB Operations")
-        col1, col2, col3 = st.columns(3)
+    st.markdown("---")
+    st.subheader("🔧 DB Operations")
+    col1, col2, col3 = st.columns(3)
+    if col1.button("🔄 Test Connection"):
+        try:
+            bal = db_manager.get_portfolio_balance()
+            st.success(f"Connected — Balance: ${bal:.2f}")
+        except Exception as e:
+            st.error(f"Connection failed: {e}")
 
-        if col1.button("🔄 Test Connection"):
+    if col2.button("📊 Refresh Stats"):
+        st.rerun()
+
+
+    if col3.button("🔄 Migrate JSON Data"):
+        try:
+            db_manager.migrate_json_data()
+            st.success("Migration complete")
+        except Exception as e:
+            st.error(f"Migration error: {e}")
+
+    st.subheader("📋 Database Tables")
+    for tbl, desc in {
+        "portfolio": "Wallet balance history",
+        "trades": "Executed trades & P&L",
+        "signals": "Generated trading signals",
+        "automation_stats": "Automation logs",
+        "system_settings": "Config key‑value pairs"
+    }.items():
+        with st.expander(f"{tbl.upper()}"):
+            st.write(f"**{desc}**")
             try:
-                with db_manager.get_session() as session:
-                    session.execute("SELECT 1")
-                st.success("✅ Connection successful")
+                df = getattr(db_manager, f"get_{tbl}")(limit=10)
+                st.dataframe(pd.DataFrame(df), use_container_width=True)
             except Exception as e:
-                st.error(f"❌ Connection failed: {e}")
-
-        if col2.button("📊 Refresh Stats"):
-            try:
-                st.cache_data.clear()
-                st.success("✅ Cache cleared")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Refresh failed: {e}")
-
-        if col3.button("🗑️ Clear Cache"):
-            try:
-                st.cache_data.clear()
-                st.cache_resource.clear()
-                st.success("✅ All caches cleared")
-            except Exception as e:
-                st.error(f"❌ Clear failed: {e}")
+                st.error(f"Error loading {tbl}: {e}")
