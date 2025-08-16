@@ -62,9 +62,9 @@ def create_modern_chart(df, symbol):
 
 
 def render(trading_engine):
-    st.set_page_config(page_title="USDT Futures Charts", layout="wide")
+    st.set_page_config(page_title="Charts", layout="wide")
     st.image("logo.png", width=80)
-    st.title("📊 USDT Perpetual Futures Overview")
+    st.title("📊 Market Overview")
 
     # Fetch symbols dynamically
     symbols = []

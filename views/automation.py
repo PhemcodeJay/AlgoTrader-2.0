@@ -157,16 +157,3 @@ def render(trading_engine, dashboard, automated_trader):
         else:
             st.info("No log file found")
 
-        st.markdown("---")
-        st.subheader("💻 Run Python Command / Script")
-        cmd = st.text_input("Enter Python command or filename", "")
-        if st.button("▶️ Run Command", key="run_cmd"):
-            if cmd.strip():
-                try:
-                    if cmd.endswith(".py") and os.path.exists(cmd):
-                        result = subprocess.run([sys.executable, cmd], capture_output=True, text=True)
-                    else:
-                        result = subprocess.run([sys.executable, "-c", cmd], capture_output=True, text=True)
-                    st.text_area("Output", result.stdout + "\n" + result.stderr, height=200)
-                except Exception as e:
-                    st.error(f"Error running command: {e}")
