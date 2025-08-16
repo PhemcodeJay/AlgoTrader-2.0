@@ -14,15 +14,20 @@ def render(trading_engine, dashboard, db_manager):
     virtual = capital_data.get("virtual") or {}
 
     real_total = float(real.get("capital") or 0.0)
-    real_available = float(real.get("available") or 0.0)
+    real_available = float(real.get("available") or real_total)
 
     virtual_total = float(virtual.get("capital") or 0.0)
-    virtual_available = float(virtual.get("available") or 0.0)
+    virtual_available = float(virtual.get("available") or virtual_total)
 
     # === Load recent trades safely ===
     all_trades = trading_engine.get_recent_trades(limit=100) or []
-    real_trades = [t for t in all_trades if not t.get("virtual")]
-    virtual_trades = [t for t in all_trades if t.get("virtual")]
+    # Ensure all trades are dicts and have a 'virtual' field
+    all_trades = [t if isinstance(t, dict) else t.to_dict() for t in all_trades]
+    for t in all_trades:
+        t["virtual"] = t.get("virtual") or False
+
+    real_trades = [t for t in all_trades if not t["virtual"]]
+    virtual_trades = [t for t in all_trades if t["virtual"]]
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -89,14 +94,16 @@ def render(trading_engine, dashboard, db_manager):
     # --- Trades Overview Chart ---
     with col_right:
         st.subheader("📊 Trades Overview")
-        if real_trades:
+        trades_for_chart = real_trades + virtual_trades  # combine both
+        total_capital = real_total + virtual_total
+        if trades_for_chart:
             try:
-                fig = dashboard.create_portfolio_performance_chart(real_trades, real_total)
+                fig = dashboard.create_portfolio_performance_chart(trades_for_chart, total_capital)
                 st.plotly_chart(fig, use_container_width=True)
             except Exception:
                 st.info("⚠️ Unable to render trades chart")
         else:
-            st.info("No real trade history available.")
+            st.info("No trade history available.")
 
     st.markdown("---")
 

@@ -14,14 +14,14 @@ def render(trading_engine, dashboard):
     # Wallet Overview
     try:
         capital_data = trading_engine.load_capital("all") or {}
-        real = capital_data.get("real", {})
-        virtual = capital_data.get("virtual", {})
+        real = capital_data.get("real", {}) or {}
+        virtual = capital_data.get("virtual", {}) or {}
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("💰 Real Balance", f"${float(real.get('capital', 0.0)):,.2f}")
-        col2.metric("Available Real", f"${float(real.get('available', real.get('capital', 0.0))):,.2f}")
-        col3.metric("🧪 Virtual Balance", f"${float(virtual.get('capital', 0.0)):,.2f}")
-        col4.metric("Available Virtual", f"${float(virtual.get('available', virtual.get('capital', 0.0))):,.2f}")
+        col1.metric("💰 Real Balance", f"${float(real.get('capital') or 0.0):,.2f}")
+        col2.metric("Available Real", f"${float(real.get('available') or real.get('capital') or 0.0):,.2f}")
+        col3.metric("🧪 Virtual Balance", f"${float(virtual.get('capital') or 0.0):,.2f}")
+        col4.metric("Available Virtual", f"${float(virtual.get('available') or virtual.get('capital') or 0.0):,.2f}")
     except Exception as e:
         st.error(f"Error loading wallet data: {e}")
 
@@ -130,20 +130,20 @@ def ensure_dict(trade):
 
 def load_capital(trading_engine, mode):
     balances = trading_engine.load_capital("all") if mode.lower() == "all" else trading_engine.load_capital(mode.lower())
-    real = balances.get("real", {})
-    virtual = balances.get("virtual", {})
-    capital = float(real.get("capital", 0.0)) + float(virtual.get("capital", 0.0))
-    available = float(real.get("available", real.get("capital", 0.0))) + float(virtual.get("available", virtual.get("capital", 0.0)))
-    start_balance = float(real.get("start_balance", 0.0)) + float(virtual.get("start_balance", 0.0))
+    real = balances.get("real", {}) or {}
+    virtual = balances.get("virtual", {}) or {}
+    capital = float(real.get("capital") or 0.0) + float(virtual.get("capital") or 0.0)
+    available = float(real.get("available") or real.get("capital") or 0.0) + float(virtual.get("available") or virtual.get("capital") or 0.0)
+    start_balance = float(real.get("start_balance") or 0.0) + float(virtual.get("start_balance") or 0.0)
     currency = real.get("currency") or virtual.get("currency") or "USD"
     return capital, available, start_balance, currency
 
 
 def display_metrics(trading_engine, trades, capital, available, start_balance):
     total_return_pct = ((capital - start_balance) / start_balance * 100) if start_balance else 0.0
-    win_rate = trading_engine.calculate_win_rate(trades) or 0.0
+    win_rate = float(trading_engine.calculate_win_rate(trades) or 0.0)
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    daily_pnl = sum(float(t.get("pnl", 0.0)) for t in trades if str(t.get("timestamp", "")).startswith(today_str))
+    daily_pnl = sum(float(t.get("pnl") or 0.0) for t in trades if str(t.get("timestamp") or "").startswith(today_str))
 
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Capital", f"${capital:,.2f}")
@@ -162,16 +162,16 @@ def paginate(trades, key, page_size=10):
 
 def manage_open_trades(trades, trading_engine):
     for trade in trades:
-        symbol = trade.get("symbol", "N/A")
-        side = trade.get("side", "N/A")
-        entry = trade.get("entry_price", "N/A")
-        qty = trade.get("qty", 0)
-        sl = trade.get("stop_loss", "N/A")
-        tp = trade.get("take_profit", "N/A")
-        pnl = float(trade.get("pnl", 0.0))
-        status = trade.get("status", "N/A")
-        virtual = trade.get("virtual", False)
-        ts = trade.get("timestamp", "")
+        symbol = trade.get("symbol") or "N/A"
+        side = trade.get("side") or "N/A"
+        entry = float(trade.get("entry_price") or 0.0)
+        qty = float(trade.get("qty") or 0.0)
+        sl = float(trade.get("stop_loss") or 0.0)
+        tp = float(trade.get("take_profit") or 0.0)
+        pnl = float(trade.get("pnl") or 0.0)
+        status = trade.get("status") or "N/A"
+        virtual = trade.get("virtual") or False
+        ts = trade.get("timestamp") or ""
         trade_id = trade.get("order_id")
 
         with st.expander(f"{symbol} | {side} | Entry: {entry}"):
