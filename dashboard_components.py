@@ -115,7 +115,11 @@ class DashboardComponents:
             st.markdown(f"Leverage: {leverage}x | Margin: {margin_display}")
 
         with col2:
-            confidence_color = "green" if confidence >= 75 else "orange" if confidence >= 60 else "red"
+            confidence_color = (
+                "green" if confidence >= 75 else
+                "orange" if confidence >= 60 else
+                "red"
+            )
             st.markdown(f"""
                 <div style='background-color: {confidence_color}; color: white; padding: 6px; 
                 border-radius: 6px; text-align: center; font-weight: bold'>
