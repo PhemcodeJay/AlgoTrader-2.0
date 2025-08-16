@@ -150,7 +150,7 @@ def route_page(page: str,
     elif page == "📈 Charts":
         charts.render(trading_engine)
     elif page == "🤖 Automation":
-        automation.render(trading_engine, dashboard, db_manager)
+        automation.render(trading_engine, automated_trader)
     elif page == "🗄️ Database":
         database.render()
     elif page == "⚙️ Settings":

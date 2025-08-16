@@ -3,7 +3,8 @@ import time
 import threading
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List 
+
 
 try:
     import bybit_client
@@ -42,47 +43,86 @@ logger = logging.getLogger(__name__)
 class AutomatedTrader:
     def __init__(self):
         self.engine = TradingEngine()
-        # Use type-ignore if engine.db or engine.client might be None (fallback)
-        self.db = self.engine.db  # type: ignore
-        self.client = self.engine.client  # type: ignore
+        
+        # Database and client references
+        self.db = getattr(self.engine, "db", None)  # type: ignore
+        self.client = getattr(self.engine, "client", None)  # type: ignore
+
         self.is_running = False
         self.automation_thread = None
+        self.last_run_time = None
 
-        # bybit_client might be missing if import failed; guard it
+        # Bybit client initialization (guarded)
         self.bybitClient = None
         if 'bybit_client' in globals():
             try:
                 self.bybitClient = bybit_client.BybitClient()
             except Exception as e:
                 logger.error(f"Failed to initialize BybitClient: {e}")
-                self.bybitClient = None
 
-        # Settings with fallback defaults
-        self.signal_interval = int(self.db.get_setting("SCAN_INTERVAL") or 3600) if self.db else 3600
-        self.max_signals = int(self.db.get_setting("TOP_N_SIGNALS") or 5) if self.db else 5
-        self.max_drawdown_limit = float(self.db.get_setting("MAX_DRAWDOWN") or 20) if self.db else 20.0
-        self.max_daily_trades = int(self.db.get_setting("MAX_DAILY_TRADES") or 50) if self.db else 50
-        self.max_position_pct = float(self.db.get_setting("MAX_POSITION_PCT") or 5) if self.db else 5.0
+        # Load automation settings from DB, fallback to defaults if missing
+        def get_setting_safe(key, default):
+            if self.db and hasattr(self.db, "get_setting"):
+                try:
+                    value = self.db.get_setting(key)
+                    return type(default)(value) if value is not None else default
+                except Exception as e:
+                    logger.error(f"Failed to load setting {key}: {e}")
+            return default
 
-        self.last_run_time = None
+        self.signal_interval = get_setting_safe("SCAN_INTERVAL", 3600)
+        self.max_signals = get_setting_safe("TOP_N_SIGNALS", 5)
+        self.max_drawdown_limit = get_setting_safe("MAX_DRAWDOWN", 20.0)
+        self.max_daily_trades = get_setting_safe("MAX_DAILY_TRADES", 50)
+        self.max_position_pct = get_setting_safe("MAX_POSITION_PCT", 5.0)
 
-        stats_setting = self.db.get_setting("AUTOMATION_STATS") if self.db else None
-        self.stats = json.loads(stats_setting) if stats_setting else {
-            "signals_generated": 0,
-            "last_update": None,
-            "trades_executed": 0,
-            "successful_trades": 0,
-            "failed_trades": 0,
-            "total_pnl": 0.0,
-        }
+        # Load automation stats from DB, fallback to empty
+        stats_setting = get_setting_safe("AUTOMATION_STATS", None)
+        if stats_setting:
+            try:
+                self.stats = json.loads(stats_setting)
+            except Exception as e:
+                logger.error(f"Failed to parse AUTOMATION_STATS: {e}")
+                self.stats = {
+                    "signals_generated": 0,
+                    "last_update": None,
+                    "trades_executed": 0,
+                    "successful_trades": 0,
+                    "failed_trades": 0,
+                    "total_pnl": 0.0,
+                }
+        else:
+            self.stats = {
+                "signals_generated": 0,
+                "last_update": None,
+                "trades_executed": 0,
+                "successful_trades": 0,
+                "failed_trades": 0,
+                "total_pnl": 0.0,
+            }
+
         self.logger = logger
 
-    def get_today_trades(self):
-        if not self.db:
-            return []
-        all_trades = self.db.get_trades(limit=500)
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        return [t for t in all_trades if hasattr(t, "timestamp") and t.timestamp.strftime("%Y-%m-%d") == today_str]
+
+    def get_today_trades(self) -> List[Any]:
+        today_trades: List[Any] = []
+        today = datetime.now().date()
+
+        db = getattr(self, "db", None)
+        get_trades = getattr(db, "get_trades", None)
+
+        if db is not None and callable(get_trades):
+            result = get_trades(limit=500)
+            # Ensure the result is iterable
+            all_trades: List[Any] = list(result) if isinstance(result, list) else []
+            for t in all_trades:
+                ts = getattr(t, "timestamp", None)
+                if isinstance(ts, datetime) and ts.date() == today:
+                    today_trades.append(t)
+
+        return today_trades
+
+
 
     def check_risk_limits(self):
         if not self.db:
