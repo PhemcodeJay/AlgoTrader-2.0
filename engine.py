@@ -641,6 +641,15 @@ class TradingEngine:
         else:
             return self.close_real_trade(trade_id)
 
+    def get_open_trades(self, virtual=None):
+        """Return all open trades. virtual=None for all, True for virtual only, False for real only."""
+        if virtual is True:
+            return self.get_open_virtual_trades()
+        elif virtual is False:
+            return self.get_open_real_trades()
+        else:
+            return self.get_open_positions()
+
 
 
 

@@ -65,7 +65,9 @@ class AutomatedTrader:
             if self.db and hasattr(self.db, "get_setting"):
                 try:
                     value = self.db.get_setting(key)
-                    return type(default)(value) if value is not None else default
+                    if value is None:
+                        return default
+                    return type(default)(value)
                 except Exception as e:
                     logger.error(f"Failed to load setting {key}: {e}")
             return default
@@ -76,22 +78,12 @@ class AutomatedTrader:
         self.max_daily_trades = get_setting_safe("MAX_DAILY_TRADES", 50)
         self.max_position_pct = get_setting_safe("MAX_POSITION_PCT", 5.0)
 
-        # Load automation stats from DB, fallback to empty
-        stats_setting = get_setting_safe("AUTOMATION_STATS", None)
-        if stats_setting:
-            try:
-                self.stats = json.loads(stats_setting)
-            except Exception as e:
-                logger.error(f"Failed to parse AUTOMATION_STATS: {e}")
-                self.stats = {
-                    "signals_generated": 0,
-                    "last_update": None,
-                    "trades_executed": 0,
-                    "successful_trades": 0,
-                    "failed_trades": 0,
-                    "total_pnl": 0.0,
-                }
-        else:
+        # Load automation stats safely
+        stats_setting = get_setting_safe("AUTOMATION_STATS", "{}")  # default empty JSON
+        try:
+            self.stats = json.loads(stats_setting)
+        except Exception as e:
+            logger.error(f"Failed to parse AUTOMATION_STATS: {e}")
             self.stats = {
                 "signals_generated": 0,
                 "last_update": None,

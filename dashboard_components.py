@@ -255,9 +255,28 @@ class DashboardComponents:
             return "N/A"
 
     def display_trade_card(self, trade):
-        """Render a single trade as a card with ROI and P&L info."""
-        roi = trade.get('roi', 0)
-        pnl = trade.get('pnl', 0)
+        """Render a single trade as a card with live ROI and P&L info."""
+        # Calculate live PnL
+        try:
+            if trade.get("virtual"):
+                pnl = float(self.engine.calculate_virtual_pnl(trade))
+            else:
+                ticker = self.engine.get_ticker(trade.get("symbol", ""))
+                entry = float(trade.get("entry_price") or 0.0)
+                qty = float(trade.get("qty") or 0.0)
+                side = (trade.get("side") or "buy").lower()
+                last_price = float(ticker.get("lastPrice", entry)) if ticker else entry
+                pnl = (last_price - entry) * qty if side == "buy" else (entry - last_price) * qty
+        except Exception:
+            pnl = float(trade.get("pnl") or 0.0)
+
+        # Calculate live ROI
+        try:
+            invested = float(trade.get("entry_price") or 0.0) * float(trade.get("qty") or 0.0)
+            roi = (pnl / invested * 100) if invested else 0.0
+        except Exception:
+            roi = float(trade.get("roi") or 0.0)
+
         border_color = "#00C853" if roi >= 0 else "#D50000"
 
         st.markdown(
@@ -294,6 +313,7 @@ class DashboardComponents:
             """,
             unsafe_allow_html=True
         )
+
 
     def calculate_duration(self, trade):
         try:
