@@ -86,11 +86,8 @@ except Exception as e:
 # --- Market Ticker Bar ---
 try:
     ticker_data = get_ticker_snapshot()
-    ticker_html = dashboard.render_ticker(ticker_data, position="top")
-    if ticker_html:
-        st.markdown(ticker_html, unsafe_allow_html=True)
+    dashboard.render_ticker(ticker_data, position="top")
 except Exception as e:
-    logger.warning(f"⚠️ Could not load market ticker: {e}")
     st.warning(f"⚠️ Could not load market ticker: {e}")
 
 # --- Navigation Menu ---
@@ -135,6 +132,7 @@ def render_wallet_summary(trading_engine):
 
 # Render Sidebar Wallet Info
 render_wallet_summary(trading_engine)
+from views.dashboard import render as dashboard_render
 
 # --- Page Routing ---
 def route_page(page: str,
@@ -143,7 +141,8 @@ def route_page(page: str,
                db_manager,
                automated_trader=None):
     if page == "🏠 Dashboard":
-        dashboard.render(trading_engine, dashboard, db_manager)
+        # Call the new render function instead of the old dashboard.render()
+        dashboard_render(trading_engine, dashboard, db_manager)
     elif page == "📊 Signals":
         signals.render(trading_engine, dashboard)
     elif page == "💼 Portfolio":
@@ -158,6 +157,7 @@ def route_page(page: str,
         settings.render(trading_engine, dashboard)
     else:
         st.warning(f"Unknown page: {page}")
+
 
 # Execute page routing
 try:

@@ -1,1 +1,5 @@
-/.env
+.env
+/views/_pycache_/
+/_pycache_/
+app.log
+automated_trader.log

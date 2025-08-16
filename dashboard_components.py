@@ -20,7 +20,8 @@ class DashboardComponents:
         self.engine = engine
         self._trade_cache = {}
 
-    def render(self):
+    def render(self, *args, **kwargs):
+
         st.title("AlgoTrader Dashboard")
 
         # 1. Real Mode Toggle
@@ -508,45 +509,44 @@ class DashboardComponents:
 
         return fig
 
-    def render_ticker(self, ticker_data, position: str = 'top') -> str:
+    def render_ticker(self, ticker_data, position='top'):
         if not ticker_data:
-            return ""
+            return
 
-        def format_volume(val: float) -> str:
+        def format_volume(val):
             if val >= 1_000_000_000:
                 return f"${val / 1_000_000_000:.1f}B"
             elif val >= 1_000_000:
                 return f"${val / 1_000_000:.1f}M"
             elif val >= 1_000:
                 return f"${val / 1_000:.1f}K"
-            return f"${val:.8f}" if val < 1 else f"${val:.2f}"
+            else:
+                return f"${val:.2f}"
 
-        # Ensure ticker_data is a list
-        tickers = ticker_data if isinstance(ticker_data, list) else [ticker_data]
-
-        ticker_html = ""
-        for t in tickers:
-            if not isinstance(t, dict):
-                continue
-
-            # Safely get price and change as floats
+        cleaned = []
+        for item in ticker_data:
             try:
-                price = float(t.get('price', 0))
-                change = float(t.get('change', 0))
-            except (TypeError, ValueError):
-                continue  # skip tickers with invalid data
-
-            # Skip zero-price tickers
-            if price == 0:
+                symbol = item.get('symbol', 'N/A')
+                price = float(item.get('lastPrice') or 0)
+                change = float(item.get('price24hPcnt') or 0) * 100
+                volume = float(item.get("turnover24h") or item.get("volume24h") or 0)
+                cleaned.append({'symbol': symbol, 'price': price, 'change': change, 'volume': volume})
+            except (ValueError, TypeError):
                 continue
 
-            symbol = t.get('symbol', '')
-            ticker_html += f"""
-            <div class="ticker" style="position: {position};">
-                <span class="symbol">{symbol}</span>
-                <span class="price">{format_volume(price)}</span>
-                <span class="change">{change:.2f}%</span>
-            </div>
-            """
+        top_20 = sorted(cleaned, key=lambda x: x['volume'], reverse=True)[:20]
+        ticker_html = " | ".join([
+            f"<b>{x['symbol']}</b>: ${x['price']:.6f} "
+            f"(<span style='color:{'#00cc66' if x['change'] > 0 else '#ff4d4d'}'>{x['change']:.2f}%</span>) "
+            f"Vol: {format_volume(x['volume'])}"
+            for x in top_20
+        ])
 
-        return ticker_html
+        if ticker_html:
+            st.markdown(f"""
+                <div style='position: fixed; {position}: 0; left: 0; width: 100%; background-color: #111; 
+                color: white; padding: 10px; font-family: monospace; font-size: 16px; 
+                white-space: nowrap; overflow: hidden; z-index: 9999;' >
+                    <marquee>{ticker_html}</marquee>
+                </div>
+            """, unsafe_allow_html=True)

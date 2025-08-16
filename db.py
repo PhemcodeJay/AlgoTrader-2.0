@@ -444,6 +444,47 @@ class DatabaseManager:
                 "profit_rate": profitable / len(closed_trades) if closed_trades else 0.0
             }
 
+    def get_status(self) -> Dict[str, Union[str, int, float]]:
+        """
+        Returns system status and ensures a 'SYSTEM_STATUS' record exists in settings.
+        """
+        with self.get_session() as session:
+            status_setting = session.query(SystemSetting).filter_by(key="SYSTEM_STATUS").first()
+
+            # If not exists, create it
+            if not status_setting:
+                status_setting = SystemSetting(
+                    key="SYSTEM_STATUS",
+                    value=json.dumps({
+                        "total_signals": self.get_signals_count(),
+                        "total_trades": self.get_trades_count(),
+                        "total_portfolio": self.get_portfolio_count(),
+                        "last_updated": datetime.now(timezone.utc).isoformat()
+                    })
+                )
+                session.add(status_setting)
+                session.commit()
+
+            # Load the JSON value
+            try:
+                status_data = json.loads(status_setting.value)
+            except Exception:
+                status_data = {}
+
+            # Always refresh counts
+            status_data.update({
+                "total_signals": self.get_signals_count(),
+                "total_trades": self.get_trades_count(),
+                "total_portfolio": self.get_portfolio_count(),
+                "last_updated": datetime.now(timezone.utc).isoformat()
+            })
+
+            # Save back to DB
+            status_setting.value = json.dumps(status_data)
+            session.commit()
+
+            return status_data
+
     def get_ml_training_data(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """Get formatted data for ML training"""
         training_data: List[Dict[str, Any]] = []
