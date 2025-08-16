@@ -3,6 +3,7 @@ import time
 import threading
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict
 
 try:
     import bybit_client
@@ -164,34 +165,47 @@ class AutomatedTrader:
             #     f"[TRADE] {symbol} {side} | Entry: {entry:.4f} | Exit: {exit_price:.4f} | PnL: {pnl_float:.2f} | {outcome}"
             # )
 
+
     def get_available_capital(self) -> float:
+        """
+        Returns available capital depending on trading mode.
+        Uses Bybit API if in real mode, otherwise reads virtual capital from capital.json.
+        """
         try:
-            if self.bybitClient and hasattr(self.bybitClient, 'use_real') and self.bybitClient.use_real:
+            # Real trading
+            bybit_client: Any = getattr(self, "bybitClient", None)
+
+            if bybit_client and getattr(bybit_client, "use_real", False):
                 try:
-                    balance_info = self.bybitClient.get_wallet_balance()
-                    return float(balance_info.get("available_balance", 0.0))
+                    balance_info: Dict[str, Any] = bybit_client.get_wallet_balance() or {}
+                    available_balance = balance_info.get("available_balance", 0.0)
+                    return float(available_balance)
                 except Exception as e:
                     self.logger.error(f"Failed to get real balance: {e}")
                     return 0.0
-            else:
-                try:
-                    with open("capital.json", "r") as f:
-                        data = json.load(f)
-                        return float(data.get("virtual", {}).get("capital", 100.0))
-                except FileNotFoundError:
-                    default_capital = {
-                        "virtual": {"capital": 100.0, "start_balance": 100.0},
-                        "real": {"capital": 0.0, "start_balance": 0.0}
-                    }
-                    with open("capital.json", "w") as f:
-                        json.dump(default_capital, f, indent=4)
-                    return 100.0
-                except Exception as e:
-                    self.logger.error(f"Failed to load virtual capital: {e}")
-                    return 100.0
+
+            # Virtual trading
+            try:
+                with open("capital.json", "r") as f:
+                    data = json.load(f)
+                    return float(data.get("virtual", {}).get("available", 100.0))
+            except FileNotFoundError:
+                # Create default structure if file is missing
+                default_capital = {
+                    "real": {"capital": 0.0, "available": 0.0, "used": 0.0, "start_balance": 0.0, "currency": "USDT"},
+                    "virtual": {"capital": 100.0, "available": 100.0, "used": 0.0, "start_balance": 100.0, "currency": "USDT"}
+                }
+                with open("capital.json", "w") as f:
+                    json.dump(default_capital, f, indent=4)
+                return 100.0
+            except Exception as e:
+                self.logger.error(f"Failed to load virtual capital: {e}")
+                return 100.0
+
         except Exception as e:
-            self.logger.error(f"Failed to load capital: {e}")
+            self.logger.error(f"Failed to get capital: {e}")
             return 0.0
+
 
     def automation_cycle(self):
         start_time = datetime.now()
