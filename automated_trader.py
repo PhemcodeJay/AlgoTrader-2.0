@@ -211,7 +211,6 @@ class AutomatedTrader:
 
                     if not self.check_risk_limits():
                         self.logger.info("⛔ Risk limits triggered. Sleeping for 1 hour with countdown.")
-
                         for remaining in range(60, 0, -1):
                             if not self.is_running:
                                 self.logger.info("🛑 Automation stopped manually during risk cooldown.")
@@ -223,9 +222,13 @@ class AutomatedTrader:
                     raw_signals = []
                     if self.engine and hasattr(self.engine, "run_once"):
                         raw_signals = self.engine.run_once() or []
+
                     valid_symbols = set()
                     if self.client and hasattr(self.client, "get_symbols"):
-                        valid_symbols = {s["symbol"] for s in self.client.get_symbols()}
+                        try:
+                            valid_symbols = {s["symbol"] for s in self.client.get_symbols()}
+                        except Exception as e:
+                            self.logger.error(f"Failed to fetch valid symbols: {e}")
 
                     top_signals = []
                     capital = self.get_available_capital()
@@ -234,6 +237,7 @@ class AutomatedTrader:
                         symbol = signal.get("Symbol")
                         margin_required = signal.get("margin_usdt")
 
+                        # Skip invalid signals with proper logging
                         if not symbol:
                             self.logger.warning("⚠️ Skipping signal with missing symbol.")
                             continue
@@ -241,7 +245,7 @@ class AutomatedTrader:
                             self.logger.warning(f"⚠️ Skipping {symbol}: margin_required is None.")
                             continue
                         if symbol not in valid_symbols:
-                            self.logger.warning(f"⚠️ Skipping unknown symbol: {symbol}")
+                            self.logger.warning(f"⚠️ Skipping {symbol}: symbol not available or no OHLCV data.")
                             continue
                         if not isinstance(capital, (int, float)):
                             self.logger.warning(f"⚠️ Skipping {symbol}: Capital is not numeric. Value: {capital}")
@@ -258,7 +262,7 @@ class AutomatedTrader:
                         if len(top_signals) >= self.max_signals:
                             break
 
-                    # Insert Trades into DB
+                    # Insert trades into DB
                     for signal in top_signals:
                         try:
                             order_id = f"virtual_{int(time.time() * 1000)}"
@@ -302,6 +306,7 @@ class AutomatedTrader:
             except Exception as e:
                 self.logger.error(f"❌ Automation error: {e}", exc_info=True)
                 time.sleep(90)
+
 
     def start(self):
         if self.is_running:
