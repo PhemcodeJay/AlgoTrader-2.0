@@ -1,10 +1,7 @@
-import os
-import sys
 import streamlit as st
-import time
 from datetime import datetime
 from engine import TradingEngine
-from automated_trader import automated_trader  # import the singleton instance
+from automated_trader import automated_trader  # singleton instance
 
 try:
     from utils import format_currency
@@ -38,7 +35,7 @@ def render(trading_engine, automated_trader):
         )
 
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "⚙️ Settings", "🖥 Logs & Terminal"])
+    tab1, tab2 = st.tabs(["📊 Dashboard", "⚙️ Settings"])
 
     # ---------------- TAB 1: DASHBOARD ----------------
     with tab1:
@@ -143,21 +140,7 @@ def render(trading_engine, automated_trader):
             st.success("Settings saved")
             st.rerun()
 
-    # ---------------- TAB 3: LOGS & TERMINAL ----------------
-    st.subheader("📜 Recent Logs / Terminal Output")
-    log_file = "automated_trader.log"
-
-    if os.path.exists(log_file):
-        try:
-            with open(log_file, encoding="utf-8") as f:
-                logs = f.read().splitlines()[-50:]  # last 50 lines
-        except Exception as e:
-            logs = [f"Error reading log: {e}"]
-        st.text_area("Log Output", "\n".join(logs[::-1]), height=400)  # newest first
-    else:
-        st.info("No log file found")
-
 
 if __name__ == "__main__":
     trading_engine = TradingEngine()
-    render(trading_engine, automated_trader)  # Pass the actual AutomatedTrader instance
+    render(trading_engine, automated_trader)

@@ -18,11 +18,18 @@ def render(trading_engine, dashboard):
         real = capital_data.get("real") or {}
         virtual = capital_data.get("virtual") or {}
 
+        # Safely extract values
+        real_capital = safe_float(real.get("capital"))
+        real_available = safe_float(real.get("available") or real.get("capital"))
+        virtual_capital = safe_float(virtual.get("capital"))
+        virtual_available = safe_float(virtual.get("available") or virtual.get("capital"))
+
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("💰 Real Balance", f"${float(real.get('capital') or 0.0):,.2f}")
-        col2.metric("Available Real", f"${float(real.get('available') or real.get('capital') or 0.0):,.2f}")
-        col3.metric("🧪 Virtual Balance", f"${float(virtual.get('capital') or 0.0):,.2f}")
-        col4.metric("Available Virtual", f"${float(virtual.get('available') or virtual.get('capital') or 0.0):,.2f}")
+        col1.metric("💰 Real Balance", f"${real_capital:,.2f}")
+        col2.metric("Available Real", f"${real_available:,.2f}")
+        col3.metric("🧪 Virtual Balance", f"${virtual_capital:,.2f}")
+        col4.metric("Available Virtual", f"${virtual_available:,.2f}")
+
     except Exception as e:
         st.error(f"Error loading wallet data: {e}")
 
@@ -49,24 +56,24 @@ def render_trades_tab(trading_engine, dashboard, trade_type, tab_index):
 
     # Compute unrealized PnL & trade age
     for t in trades:
-        entry_price = float(t.get("entry_price") or 0.0)
-        qty = float(t.get("qty") or 0.0)
+        entry_price = safe_float(t.get("entry_price"))
+        qty = safe_float(t.get("qty"))
         side_safe = (t.get("side") or "buy").lower()
 
         # Recalculate PnL if trade is open
         if (t.get("status") or "").lower() == "open":
             try:
                 if t.get("virtual"):
-                    t["pnl"] = trading_engine.calculate_virtual_pnl(t)
+                    t["pnl"] = safe_float(trading_engine.calculate_virtual_pnl(t))
                 else:
                     ticker = trading_engine.get_ticker(t.get("symbol") or "")
                     if ticker:
-                        last_price = float(ticker.get("lastPrice", entry_price))
+                        last_price = safe_float(ticker.get("lastPrice"), entry_price)
                         t["pnl"] = (last_price - entry_price) * qty if side_safe == "buy" else (entry_price - last_price) * qty
             except Exception:
-                t["pnl"] = float(t.get("pnl") or 0.0)
+                t["pnl"] = safe_float(t.get("pnl"))
         else:
-            t["pnl"] = float(t.get("pnl") or 0.0)
+            t["pnl"] = safe_float(t.get("pnl"))
 
         # Trade age
         ts = t.get("timestamp")
@@ -158,18 +165,22 @@ def load_capital(trading_engine, mode):
     balances = trading_engine.load_capital("all") if mode.lower() == "all" else trading_engine.load_capital(mode.lower())
     real = balances.get("real") or {}
     virtual = balances.get("virtual") or {}
-    capital = float(real.get("capital") or 0.0) + float(virtual.get("capital") or 0.0)
-    available = float(real.get("available") or real.get("capital") or 0.0) + float(virtual.get("available") or virtual.get("capital") or 0.0)
-    start_balance = float(real.get("start_balance") or 0.0) + float(virtual.get("start_balance") or 0.0)
+    capital = safe_float(real.get("capital")) + safe_float(virtual.get("capital"))
+    available = safe_float(real.get("available") or real.get("capital")) + safe_float(virtual.get("available") or virtual.get("capital"))
+    start_balance = safe_float(real.get("start_balance")) + safe_float(virtual.get("start_balance"))
     currency = real.get("currency") or virtual.get("currency") or "USD"
     return capital, available, start_balance, currency
 
 
 def display_metrics(trading_engine, trades, capital, available, start_balance):
+    # Ensure all values are floats
+    capital = safe_float(capital)
+    available = safe_float(available)
+    start_balance = safe_float(start_balance)
     total_return_pct = ((capital - start_balance) / start_balance * 100) if start_balance else 0.0
-    win_rate = float(trading_engine.calculate_win_rate(trades) or 0.0)
+    win_rate = safe_float(trading_engine.calculate_win_rate(trades))
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    daily_pnl = sum(float(t.get("pnl") or 0.0) for t in trades if str(t.get("timestamp") or "").startswith(today_str))
+    daily_pnl = sum(safe_float(t.get("pnl")) for t in trades if str(t.get("timestamp") or "").startswith(today_str))
 
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Capital", f"${capital:,.2f}")
@@ -186,21 +197,44 @@ def paginate(trades, key, page_size=10):
     return trades[start:end]
 
 
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_timestamp(ts):
+    """Convert timestamp to UTC datetime string or return 'N/A' if invalid."""
+    if not ts:
+        return "N/A"
+    try:
+        if isinstance(ts, str):
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        elif isinstance(ts, datetime):
+            dt = ts
+        else:
+            return "N/A"
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        return "N/A"
+
+
 def manage_open_trades(trades, trading_engine):
     """
-    Display open trades with live PnL updates every 5 seconds, color-highlighted by profit/loss.
+    Display open trades with live PnL updates, color-highlighted by profit/loss.
     """
     for idx, trade in enumerate(trades):
         symbol = trade.get("symbol") or "N/A"
         side = trade.get("side") or "buy"
-        entry = float(trade.get("entry_price") or 0.0)
-        qty = float(trade.get("qty") or 0.0)
-        sl = float(trade.get("stop_loss") or 0.0)
-        tp = float(trade.get("take_profit") or 0.0)
-        pnl = float(trade.get("pnl") or 0.0)
+        entry = safe_float(trade.get("entry_price"))
+        qty = safe_float(trade.get("qty"))
+        sl = safe_float(trade.get("stop_loss"))
+        tp = safe_float(trade.get("take_profit"))
+        pnl = safe_float(trade.get("pnl"))
         status = trade.get("status") or "N/A"
         virtual = trade.get("virtual") or False
-        ts = trade.get("timestamp") or ""
+        ts = safe_timestamp(trade.get("timestamp"))
         trade_id = trade.get("order_id") or f"{symbol}_{idx}"
 
         pnl_key = f"pnl_{trade_id}"
@@ -213,24 +247,24 @@ def manage_open_trades(trades, trading_engine):
         if (status or "").lower() == "open":
             try:
                 if virtual:
-                    st.session_state[pnl_key] = trading_engine.calculate_virtual_pnl(trade)
+                    st.session_state[pnl_key] = safe_float(trading_engine.calculate_virtual_pnl(trade))
                 else:
                     ticker = trading_engine.get_ticker(symbol)
                     if ticker:
-                        last_price = float(ticker.get("lastPrice", entry))
+                        last_price = safe_float(ticker.get("lastPrice"), entry)
                         side_safe = side.lower()
                         st.session_state[pnl_key] = (last_price - entry) * qty if side_safe == "buy" else (entry - last_price) * qty
             except Exception:
                 st.session_state[pnl_key] = pnl
 
-        pnl_display = st.session_state[pnl_key]
+        pnl_display = safe_float(st.session_state.get(pnl_key, 0.0))
         color = "green" if pnl_display >= 0 else "red"
 
         with st.expander(f"{symbol} | {side} | Entry: {entry:.2f} | PnL: {pnl_display:+.2f}", expanded=True):
             cols = st.columns(4)
-            cols[0].markdown(f"**Qty:** {qty}")
-            cols[1].markdown(f"**SL:** {sl}")
-            cols[2].markdown(f"**TP:** {tp}")
+            cols[0].markdown(f"**Qty:** {safe_float(qty):.2f}")
+            cols[1].markdown(f"**SL:** {safe_float(sl):.2f}")
+            cols[2].markdown(f"**TP:** {safe_float(tp):.2f}")
             cols[3].markdown(f"**PnL:** <span style='color:{color}'>{pnl_display:+.2f}</span>", unsafe_allow_html=True)
             st.markdown(f"**Status:** {status} | **Mode:** {'Virtual' if virtual else 'Real'} ⏱ `{ts}`")
 

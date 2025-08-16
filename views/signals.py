@@ -20,7 +20,7 @@ def render(trading_engine, dashboard):
     with col1:
         symbol_limit = st.number_input("Symbols to Analyze", min_value=10, max_value=100, value=50)
     with col2:
-        confidence_threshold = st.slider("Min Confidence %", 40, 90, 60)
+        confidence_threshold = st.slider("Min Confidence %", 40, 95, 50)
     with col3:
         if st.button("🔄 Scan New Signals"):
             with st.spinner("Analyzing markets..."):
