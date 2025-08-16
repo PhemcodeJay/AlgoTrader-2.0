@@ -1,7 +1,6 @@
 import streamlit as st
 from datetime import datetime, timezone
-from utils import format_trades  # Make sure this exists
-
+from utils import format_trades  # Assumes you have a formatting helper
 
 # =========================
 # Main Render Function
@@ -11,11 +10,13 @@ def render(trading_engine, dashboard):
     st.image("logo.png", width=80)
     st.title("💼 Wallet Summary")
 
+    # ---------------------------
     # Wallet Overview
+    # ---------------------------
     try:
         capital_data = trading_engine.load_capital("all") or {}
-        real = capital_data.get("real", {}) or {}
-        virtual = capital_data.get("virtual", {}) or {}
+        real = capital_data.get("real") or {}
+        virtual = capital_data.get("virtual") or {}
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("💰 Real Balance", f"${float(real.get('capital') or 0.0):,.2f}")
@@ -27,7 +28,9 @@ def render(trading_engine, dashboard):
 
     st.markdown("---")
 
+    # ---------------------------
     # Tabs
+    # ---------------------------
     tabs = st.tabs(["🔄 All Trades", "📂 Open Trades", "✅ Closed Trades"])
     tab_types = ["all", "open", "closed"]
     for idx, trade_type in enumerate(tab_types):
@@ -40,11 +43,32 @@ def render(trading_engine, dashboard):
 # =========================
 def render_trades_tab(trading_engine, dashboard, trade_type, tab_index):
     mode = st.radio("Mode", ["All", "Real", "Virtual"], key=f"mode_{trade_type}", horizontal=True)
+
     trades = fetch_trades(trading_engine, trade_type, mode)
     trades = [ensure_dict(t) for t in trades]
 
-    # Compute trade age safely
+    # Compute unrealized PnL & trade age
     for t in trades:
+        entry_price = float(t.get("entry_price") or 0.0)
+        qty = float(t.get("qty") or 0.0)
+        side_safe = (t.get("side") or "buy").lower()
+
+        # Recalculate PnL if trade is open
+        if (t.get("status") or "").lower() == "open":
+            try:
+                if t.get("virtual"):
+                    t["pnl"] = trading_engine.calculate_virtual_pnl(t)
+                else:
+                    ticker = trading_engine.get_ticker(t.get("symbol") or "")
+                    if ticker:
+                        last_price = float(ticker.get("lastPrice", entry_price))
+                        t["pnl"] = (last_price - entry_price) * qty if side_safe == "buy" else (entry_price - last_price) * qty
+            except Exception:
+                t["pnl"] = float(t.get("pnl") or 0.0)
+        else:
+            t["pnl"] = float(t.get("pnl") or 0.0)
+
+        # Trade age
         ts = t.get("timestamp")
         try:
             ts_dt = None
@@ -59,7 +83,9 @@ def render_trades_tab(trading_engine, dashboard, trade_type, tab_index):
     capital, available, start_balance, _ = load_capital(trading_engine, mode)
     display_metrics(trading_engine, trades, capital, available, start_balance)
 
-    # Charts and stats
+    # ---------------------------
+    # Charts & Stats
+    # ---------------------------
     left, right = st.columns([2, 1])
     with left:
         st.subheader("📈 Assets Performance")
@@ -83,7 +109,9 @@ def render_trades_tab(trading_engine, dashboard, trade_type, tab_index):
         else:
             st.info("No stats available.")
 
-    # Trades table
+    # ---------------------------
+    # Trades Table
+    # ---------------------------
     st.markdown("---")
     st.subheader("🧾 Trades Table")
     paginated_trades = paginate(trades, f"page_{tab_index}")
@@ -101,19 +129,17 @@ def fetch_trades(trading_engine, trade_type, mode):
     if trade_type == "all":
         trades = trading_engine.get_recent_trades(limit=100) or []
     elif trade_type == "open":
-        trades = (trading_engine.get_open_real_trades() or []) + (trading_engine.get_open_virtual_trades() or [])
-        if mode == "real":
-            trades = trading_engine.get_open_real_trades() or []
-        elif mode == "virtual":
-            trades = trading_engine.get_open_virtual_trades() or []
+        trades = trading_engine.get_open_trades() or []
     elif trade_type == "closed":
-        trades = (trading_engine.get_closed_real_trades() or []) + (trading_engine.get_closed_virtual_trades() or [])
-        if mode == "real":
-            trades = trading_engine.get_closed_real_trades() or []
-        elif mode == "virtual":
-            trades = trading_engine.get_closed_virtual_trades() or []
+        trades = trading_engine.get_closed_trades() or []
     else:
         trades = []
+
+    if mode == "real":
+        trades = [t for t in trades if not t.get("virtual")]
+    elif mode == "virtual":
+        trades = [t for t in trades if t.get("virtual")]
+
     return trades
 
 
@@ -130,8 +156,8 @@ def ensure_dict(trade):
 
 def load_capital(trading_engine, mode):
     balances = trading_engine.load_capital("all") if mode.lower() == "all" else trading_engine.load_capital(mode.lower())
-    real = balances.get("real", {}) or {}
-    virtual = balances.get("virtual", {}) or {}
+    real = balances.get("real") or {}
+    virtual = balances.get("virtual") or {}
     capital = float(real.get("capital") or 0.0) + float(virtual.get("capital") or 0.0)
     available = float(real.get("available") or real.get("capital") or 0.0) + float(virtual.get("available") or virtual.get("capital") or 0.0)
     start_balance = float(real.get("start_balance") or 0.0) + float(virtual.get("start_balance") or 0.0)
@@ -161,9 +187,12 @@ def paginate(trades, key, page_size=10):
 
 
 def manage_open_trades(trades, trading_engine):
-    for trade in trades:
+    """
+    Display open trades with live PnL updates every 5 seconds, color-highlighted by profit/loss.
+    """
+    for idx, trade in enumerate(trades):
         symbol = trade.get("symbol") or "N/A"
-        side = trade.get("side") or "N/A"
+        side = trade.get("side") or "buy"
         entry = float(trade.get("entry_price") or 0.0)
         qty = float(trade.get("qty") or 0.0)
         sl = float(trade.get("stop_loss") or 0.0)
@@ -172,20 +201,46 @@ def manage_open_trades(trades, trading_engine):
         status = trade.get("status") or "N/A"
         virtual = trade.get("virtual") or False
         ts = trade.get("timestamp") or ""
-        trade_id = trade.get("order_id")
+        trade_id = trade.get("order_id") or f"{symbol}_{idx}"
 
-        with st.expander(f"{symbol} | {side} | Entry: {entry}"):
+        pnl_key = f"pnl_{trade_id}"
+        close_key = f"close_{trade_id}"
+
+        if pnl_key not in st.session_state:
+            st.session_state[pnl_key] = pnl
+
+        # Live PnL update
+        if (status or "").lower() == "open":
+            try:
+                if virtual:
+                    st.session_state[pnl_key] = trading_engine.calculate_virtual_pnl(trade)
+                else:
+                    ticker = trading_engine.get_ticker(symbol)
+                    if ticker:
+                        last_price = float(ticker.get("lastPrice", entry))
+                        side_safe = side.lower()
+                        st.session_state[pnl_key] = (last_price - entry) * qty if side_safe == "buy" else (entry - last_price) * qty
+            except Exception:
+                st.session_state[pnl_key] = pnl
+
+        pnl_display = st.session_state[pnl_key]
+        color = "green" if pnl_display >= 0 else "red"
+
+        with st.expander(f"{symbol} | {side} | Entry: {entry:.2f} | PnL: {pnl_display:+.2f}", expanded=True):
             cols = st.columns(4)
             cols[0].markdown(f"**Qty:** {qty}")
             cols[1].markdown(f"**SL:** {sl}")
             cols[2].markdown(f"**TP:** {tp}")
-            cols[3].markdown(f"**PnL:** {pnl}")
+            cols[3].markdown(f"**PnL:** <span style='color:{color}'>{pnl_display:+.2f}</span>", unsafe_allow_html=True)
             st.markdown(f"**Status:** {status} | **Mode:** {'Virtual' if virtual else 'Real'} ⏱ `{ts}`")
 
-            if status.lower() == "open" and trade_id:
-                if st.button("❌ Close Trade", key=f"close_{symbol}_{trade_id}_{ts}"):
-                    if trading_engine.close_trade(str(trade_id), virtual):
+            # Close trade button
+            if (status or "").lower() == "open":
+                if st.button("❌ Close Trade", key=close_key):
+                    success = trading_engine.close_trade(str(trade_id), virtual)
+                    if success:
                         st.success(f"{'Virtual' if virtual else 'Real'} trade closed successfully.")
-                        st.rerun()
+                        trade["status"] = "closed"
+                        trade["pnl"] = st.session_state[pnl_key]
                     else:
                         st.error("Failed to close trade.")
