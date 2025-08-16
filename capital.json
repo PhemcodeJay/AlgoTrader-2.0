@@ -7,10 +7,10 @@
         "currency": "USDT"
     },
     "virtual": {
-        "capital": 100.0,
-        "available": 100.0,
+        "capital": 200.0,
+        "available": 200.0,
         "used": 0.0,
-        "start_balance": 100.0,
+        "start_balance": 200.0,
         "currency": "USDT"
     }
 }

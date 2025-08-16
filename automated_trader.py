@@ -297,6 +297,11 @@ class AutomatedTrader:
 
                     self.last_run_time = now
                     self.logger.info(f"✅ Cycle complete. {len(top_signals)} trades processed. Next run in {self.signal_interval} seconds.")
+                    # Single-line countdown
+                    for remaining in range(self.signal_interval, 0, -1):
+                        print(f"\rNext run in {remaining} seconds...", end="", flush=True)
+                        time.sleep(1)
+                    print("\rStarting next cycle now!          ")
 
                 time.sleep(30)
             except Exception as e:
