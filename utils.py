@@ -26,7 +26,8 @@ def calculate_indicators(data: List[Dict[str, Any]]) -> pd.DataFrame:
     avg_loss = loss.rolling(14).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     df['RSI'] = 100 - (100 / (1 + rs))
-    df['RSI'].fillna(0, inplace=True)
+    df['RSI'] = df['RSI'].fillna(0)
+
 
     df['EMA_21'] = df['close'].ewm(span=21, adjust=False).mean()
     df['EMA_50'] = df['close'].ewm(span=50, adjust=False).mean()

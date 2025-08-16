@@ -535,6 +535,9 @@ class DashboardComponents:
                 continue
 
         top_20 = sorted(cleaned, key=lambda x: x['volume'], reverse=True)[:20]
+        # Force BTC, ETH, BNB to appear first in order
+        priority = ['BTC', 'ETH', 'BNB', 'SOL', 'DOGE']
+        top_20 = sorted(top_20, key=lambda x: (x['symbol'] not in priority, priority.index(x['symbol']) if x['symbol'] in priority else 99))
         ticker_html = " | ".join([
             f"<b>{x['symbol']}</b>: ${x['price']:.6f} "
             f"(<span style='color:{'#00cc66' if x['change'] > 0 else '#ff4d4d'}'>{x['change']:.2f}%</span>) "
