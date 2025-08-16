@@ -2,13 +2,22 @@ import streamlit as st
 from datetime import datetime, timezone
 from utils import format_trades  # optional helper for formatting
 
+
 # =========================
 # Main Render Function
 # =========================
-def render(trading_engine, dashboard):
+def render(trading_engine, dashboard, db_manager, automated_trader):
+    # --- Page Config ---
     st.set_page_config(page_title="💼 Wallet Summary", layout="wide")
     st.image("logo.png", width=80)
     st.title("💼 Wallet Summary")
+
+    # === Load Portfolio Data ===
+    try:
+        trades = db_manager.get_trades() or []   # adjust to your db schema
+    except Exception as e:
+        st.error(f"❌ Failed to load portfolio trades: {e}")
+        return
 
     # ---------------------------
     # Wallet Overview
@@ -39,6 +48,7 @@ def render(trading_engine, dashboard):
     # ---------------------------
     tabs = st.tabs(["🔄 All Trades", "📂 Open Trades", "✅ Closed Trades"])
     tab_types = ["all", "open", "closed"]
+
     for idx, trade_type in enumerate(tab_types):
         with tabs[idx]:
             render_trades_tab(trading_engine, dashboard, trade_type, idx)
@@ -58,7 +68,6 @@ def render_trades_tab(trading_engine, dashboard, trade_type, tab_index):
         qty = safe_float(t.get("qty"))
         side_safe = (t.get("side") or "buy").lower()
 
-        # PnL calculation
         if (t.get("status") or "").lower() == "open":
             try:
                 if t.get("virtual"):
@@ -127,7 +136,7 @@ def render_trades_tab(trading_engine, dashboard, trade_type, tab_index):
 
 
 # =========================
-# Helper Functions
+# Helpers
 # =========================
 def fetch_trades(trading_engine, trade_type, mode):
     mode = mode.lower()
@@ -168,7 +177,6 @@ def load_capital(trading_engine, mode):
 
 
 def display_metrics(trading_engine, trades, capital, available, start_balance):
-    # Ensure all numeric values are floats
     capital = safe_float(capital)
     available = safe_float(available)
     start_balance = safe_float(start_balance)
@@ -179,20 +187,12 @@ def display_metrics(trading_engine, trades, capital, available, start_balance):
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     daily_pnl = sum(safe_float(t.get("pnl")) for t in trades if str(t.get("timestamp") or "").startswith(today_str))
 
-    # Ensure all values are floats for formatting
-    capital_str = f"${safe_float(capital):,.2f}"
-    available_str = f"${safe_float(available):,.2f}"
-    total_return_str = f"{safe_float(total_return_pct):+.2f}%"
-    daily_pnl_str = f"${safe_float(daily_pnl):+.2f}"
-    win_rate_str = f"{safe_float(win_rate):.2f}%"
-
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Capital", capital_str)
-    col2.metric("Available", available_str)
-    col3.metric("Total Return", total_return_str)
-    col4.metric("Daily P&L", daily_pnl_str)
-    col5.metric("Win Rate", win_rate_str)
-
+    col1.metric("Capital", f"${capital:,.2f}")
+    col2.metric("Available", f"${available:,.2f}")
+    col3.metric("Total Return", f"{total_return_pct:+.2f}%")
+    col4.metric("Daily P&L", f"${daily_pnl:+.2f}")
+    col5.metric("Win Rate", f"{win_rate:.2f}%")
 
 
 def paginate(trades, key, page_size=10):
@@ -241,11 +241,9 @@ def manage_open_trades(trades, trading_engine):
         pnl_key = f"pnl_{trade_id}"
         close_key = f"close_{trade_id}"
 
-        # Initialize session state
         if pnl_key not in st.session_state:
             st.session_state[pnl_key] = pnl
 
-        # Live PnL update for open trades
         if (status or "").lower() == "open":
             try:
                 if virtual:
@@ -262,23 +260,15 @@ def manage_open_trades(trades, trading_engine):
         pnl_display = safe_float(st.session_state.get(pnl_key, 0.0))
         color = "green" if pnl_display >= 0 else "red"
 
-        # Precompute formatted strings safely
-        entry_str = f"{entry:.2f}"
-        qty_str = f"{qty:.2f}"
-        sl_str = f"{sl:.2f}"
-        tp_str = f"{tp:.2f}"
-        pnl_str = f"{pnl_display:+.2f}"
-
-        with st.expander(f"{symbol} | {side} | Entry: {entry_str} | PnL: {pnl_str}", expanded=True):
+        with st.expander(f"{symbol} | {side} | Entry: {entry:.2f} | PnL: {pnl_display:+.2f}", expanded=True):
             cols = st.columns(4)
-            cols[0].markdown(f"**Qty:** {qty_str}")
-            cols[1].markdown(f"**SL:** {sl_str}")
-            cols[2].markdown(f"**TP:** {tp_str}")
-            cols[3].markdown(f"**PnL:** <span style='color:{color}'>{pnl_str}</span>", unsafe_allow_html=True)
+            cols[0].markdown(f"**Qty:** {qty:.2f}")
+            cols[1].markdown(f"**SL:** {sl:.2f}")
+            cols[2].markdown(f"**TP:** {tp:.2f}")
+            cols[3].markdown(f"**PnL:** <span style='color:{color}'>{pnl_display:+.2f}</span>", unsafe_allow_html=True)
 
             st.markdown(f"**Status:** {status} | **Mode:** {'Virtual' if virtual else 'Real'} ⏱ `{ts}`")
 
-            # Close trade button
             if (status or "").lower() == "open":
                 if st.button("❌ Close Trade", key=close_key):
                     success = trading_engine.close_trade(str(trade_id), virtual)

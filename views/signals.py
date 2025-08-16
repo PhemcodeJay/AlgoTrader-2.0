@@ -67,12 +67,14 @@ def render(trading_engine, dashboard):
 
     # === Display Tabs ===
     tab1, tab2 = st.tabs(["📋 Signal Cards", "📊 Signal Table"])
+
     with tab1:
         if filtered_signals:
             for i, signal in enumerate(filtered_signals[:10]):
                 with st.expander(
-                    f"{signal.get('symbol', 'N/A')} - {signal.get('signal_type', 'N/A')} ({signal.get('score',0):.1f}%)",
-                    expanded=(i==0)
+                    f"{signal.get('symbol', 'N/A')} - {signal.get('side', 'N/A')} "
+                    f"({signal.get('score', 0):.1f}%)",
+                    expanded=(i == 0)   # expand first one by default
                 ):
                     dashboard.display_signal_card(signal)
         else:
@@ -83,6 +85,7 @@ def render(trading_engine, dashboard):
             dashboard.display_signals_table(filtered_signals)
         else:
             st.info("No signals to display in table.")
+
 
     # === Export Actions ===
     if filtered_signals:
