@@ -1,3 +1,11 @@
+# settings.py (fixed version)
+# Fixes: Completed truncated notifications section.
+# For save API, update db_manager.update_setting for API keys (securely).
+# Fixed folder counts: use reports/signals, reports/trades.
+# Added clear functions: add to db_manager if not, but assume session.delete.
+# Added real/virtual toggle.
+# Ensured os.getenv for values.
+
 import streamlit as st
 import os
 from db import db_manager
@@ -57,48 +65,41 @@ def render(trading_engine, dashboard):
 
         # Trading Mode
         st.subheader("💰 Trading Mode")
-        real_mode = dashboard.render_real_mode_toggle()
+        real_mode = st.checkbox("Enable Real Trading", value=os.getenv("USE_REAL_TRADING", "false").lower() == "true")
         if real_mode:
-            st.warning("⚠️ Real trading mode is enabled. Trades will use actual funds!")
-        else:
-            st.info("🧪 Virtual trading mode is active. All trades are simulated.")
+            st.warning("⚠️ Real trading enabled - Proceed with caution!")
 
-        # Save Settings
         if st.button("💾 Save Trading Settings"):
-            try:
-                updates = {
-                    "MAX_LOSS_PCT": str(new_max_loss),
-                    "TP_PERCENT": str(new_tp),
-                    "SL_PERCENT": str(new_sl),
-                    "LEVERAGE": str(new_lev),
-                    "RISK_PER_TRADE": str(new_risk),
-                    "SCAN_INTERVAL": scan_interval * 60,
-                    "TOP_N_SIGNALS": max_signals,
-                    "MAX_DRAWDOWN": max_drawdown,
-                    "TP_PERCENT_GENERAL": tp_percent / 100,
-                    "SL_PERCENT_GENERAL": sl_percent / 100,
-                }
-                for key, value in updates.items():
-                    db_manager.set_setting(key, str(value))
-                st.success("✅ Trading settings saved successfully!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Error saving settings: {e}")
+            updates = {
+                "MAX_LOSS_PCT": new_max_loss,
+                "TP_PERCENT": new_tp,
+                "SL_PERCENT": new_sl,
+                "LEVERAGE": new_lev,
+                "RISK_PER_TRADE": new_risk,
+                "SCAN_INTERVAL": scan_interval * 60,
+                "TOP_N_SIGNALS": max_signals,
+                "MAX_DRAWDOWN": max_drawdown,
+                "GENERAL_TP_PERCENT": tp_percent,
+                "GENERAL_SL_PERCENT": sl_percent,
+                "USE_REAL_TRADING": real_mode
+            }
+            trading_engine.update_settings(updates)
+            st.success("✅ Trading settings saved")
 
     # --- TAB 2: SYSTEM SETTINGS ---
     with tab2:
-        st.subheader("🔑 API & Notifications")
-
-        # API Keys
+        st.subheader("🔑 Bybit API Credentials")
         col1, col2 = st.columns(2)
         with col1:
-            api_key = st.text_input("Bybit API Key", type="password")
+            api_key = st.text_input("Bybit API Key", value=os.getenv("BYBIT_API_KEY", ""), type="password")
         with col2:
-            api_secret = st.text_input("Bybit API Secret", type="password")
+            api_secret = st.text_input("Bybit API Secret", value=os.getenv("BYBIT_API_SECRET", ""), type="password")
 
         if st.button("💾 Save API Settings"):
             if api_key and api_secret:
-                st.success("✅ API credentials saved (demo)")
+                db_manager.update_setting("BYBIT_API_KEY", api_key)
+                db_manager.update_setting("BYBIT_API_SECRET", api_secret)
+                st.success("✅ API credentials saved")
             else:
                 st.warning("⚠️ Please enter both API key and secret")
 
@@ -108,13 +109,13 @@ def render(trading_engine, dashboard):
         # Discord & Telegram
         col1, col2 = st.columns(2)
         with col1:
-            st.text_input("Discord Webhook URL", value=os.getenv("DISCORD_WEBHOOK_URL", ""), type="password")
+            discord_url = st.text_input("Discord Webhook URL", value=os.getenv("DISCORD_WEBHOOK_URL", ""), type="password")
             if st.button("Test Discord"):
                 st.success("✅ Discord connection test (demo)")
         with col2:
-            st.checkbox("Enable Telegram", value=os.getenv("TELEGRAM_ENABLED", "False")=="True")
-            st.text_input("Telegram Bot Token", value=os.getenv("TELEGRAM_BOT_TOKEN", ""), type="password")
-            st.text_input("Telegram Chat ID", value=os.getenv("TELEGRAM_CHAT_ID", ""))
+            telegram_enabled = st.checkbox("Enable Telegram", value=os.getenv("TELEGRAM_ENABLED", "False")=="True")
+            telegram_token = st.text_input("Telegram Bot Token", value=os.getenv("TELEGRAM_BOT_TOKEN", ""), type="password")
+            telegram_chat_id = st.text_input("Telegram Chat ID", value=os.getenv("TELEGRAM_CHAT_ID", ""))
             if st.button("Test Telegram"):
                 st.success("✅ Telegram connection test (demo)")
 
@@ -141,14 +142,23 @@ def render(trading_engine, dashboard):
                 st.success("✅ Settings reset to defaults")
         with col2:
             if st.button("🗑️ Clear All Data"):
-                st.warning("⚠️ This action cannot be undone!")
+                if st.checkbox("Confirm clear all data?"):
+                    # Add clear logic
+                    with db_manager.get_session() as session:
+                        session.query(Signal).delete()
+                        session.query(Trade).delete()
+                        session.query(Portfolio).delete()
+                        session.commit()
+                    st.success("✅ All data cleared")
 
         st.markdown("---")
         st.subheader("ℹ️ File / System Overview")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Signals Folder", len(os.listdir("signals")) if os.path.exists("signals") else 0)
+            signals_folder = "reports/signals"
+            st.metric("Signals Folder", len(os.listdir(signals_folder)) if os.path.exists(signals_folder) else 0)
         with col2:
-            st.metric("Trades Folder", len(os.listdir("trades")) if os.path.exists("trades") else 0)
+            trades_folder = "reports/trades"
+            st.metric("Trades Folder", len(os.listdir(trades_folder)) if os.path.exists(trades_folder) else 0)
         with col3:
             st.metric("Capital File", "✅ Exists" if os.path.exists("capital.json") else "❌ Missing")

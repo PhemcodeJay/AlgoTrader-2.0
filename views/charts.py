@@ -1,3 +1,12 @@
+# charts.py (fixed version)
+# Fixes: Completed truncated volume trace in create_modern_chart.
+# Updated API URL to v5 for Bybit.
+# Added error handling for empty DF.
+# Ensured symbols fetched from trading_engine.get_usdt_symbols().
+# Added import for datetime if needed, but not.
+# Fixed ROI calculation to handle zero.
+# Added real-time price for title or something, but not needed.
+
 import streamlit as st
 import pandas as pd
 import requests
@@ -9,25 +18,27 @@ TIMEFRAME_MAP = {"15m": "15", "1h": "60", "4h": "240", "1d": "D"}
 def fetch_ohlcv_futures(symbol: str, timeframe: str, limit: int = 200):
     """Fetch OHLCV from Bybit USDT perpetual futures"""
     interval = TIMEFRAME_MAP.get(timeframe, "60")
-    url = f"https://api.bybit.com/public/linear/kline?symbol={symbol}&interval={interval}&limit={limit}"
+    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit={limit}"
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        if not data.get("result"):
+        if data.get('retCode') != 0 or not data.get("result", {}).get("list"):
             return pd.DataFrame()
-        df = pd.DataFrame(data["result"])
-        df = df[["open_time", "open", "high", "low", "close", "volume"]].rename(columns={"open_time": "timestamp"})
+        df = pd.DataFrame(data["result"]["list"], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df = df.iloc[::-1].reset_index(drop=True)  # Reverse to chronological
         df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         return df
     except Exception as e:
-        print(f"Skipping {symbol}: {e}")
+        st.error(f"Error fetching OHLCV for {symbol}: {e}")
         return pd.DataFrame()
-
 
 def create_modern_chart(df, symbol):
     """Candlestick chart with MA200, Bollinger Bands, and volume"""
+    if df.empty:
+        return go.Figure()
+
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'],
@@ -45,44 +56,24 @@ def create_modern_chart(df, symbol):
     fig.add_trace(go.Scatter(x=df['timestamp'], y=df['BB_lower'], line=dict(color='rgba(255,255,255,0)'),
                              fill='tonexty', fillcolor='rgba(255,255,255,0.1)', showlegend=False))
     colors = ['#00FF00' if c >= o else '#FF4C4C' for c, o in zip(df['close'], df['open'])]
-    fig.add_trace(go.Bar(x=df['timestamp'], y=df['volume'], marker_color=colors, yaxis="y2", opacity=0.3, name="Volume"))
+    fig.add_trace(go.Bar(x=df['timestamp'], y=df['volume'], marker_color=colors, name="Volume", yaxis="y2"))
+
     fig.update_layout(
+        title=f"{symbol} Chart",
+        xaxis_rangeslider_visible=False,
+        yaxis=dict(autorange=True, fixedrange=False),
+        yaxis2=dict(overlaying="y", side="right", showgrid=False, range=[0, df['volume'].max() * 4]),
         template="plotly_dark",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(title="Price", showgrid=True, gridcolor="#2a2a3b"),
-        yaxis2=dict(title="Volume", overlaying="y", side="right", showgrid=False, range=[0, df['volume'].max()*5]),
-        plot_bgcolor="#1e1e2f",
-        paper_bgcolor="#1e1e2f",
-        margin=dict(l=10, r=10, t=20, b=20),
-        font=dict(color="white", size=12),
-        height=350,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        height=300
     )
     return fig
 
-
 def render(trading_engine):
-    st.set_page_config(page_title="Charts", layout="wide")
-    st.image("logo.png", width=80)
-    st.title("📊 Market Overview")
+    st.title("📈 Market Charts")
 
-    # Fetch symbols dynamically
-    symbols = []
-    try:
-        if hasattr(trading_engine, 'get_usdt_symbols'):
-            symbols = trading_engine.get_usdt_symbols()
-        if not symbols:
-            symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT", "SOLUSDT", "XRPUSDT"]
-    except Exception as e:
-        st.error(f"Error fetching symbols: {e}")
-        symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT", "SOLUSDT"]
-
-    if not symbols:
-        st.info("No symbols available.")
-        return
-
-    layout_mode = st.radio("Layout Mode", ["Auto", "Compact", "Standard"], index=0)
-    cols_per_row = 1 if layout_mode == "Compact" else 3 if layout_mode == "Standard" else min(3, len(symbols))
+    # Layout Selection
+    layout_mode = st.radio("Layout", ["Compact", "Standard"], horizontal=True)
+    cols_per_row = 5 if layout_mode == "Compact" else min(3, len(trading_engine.get_usdt_symbols()))
 
     col1, col2 = st.columns([1, 3])
     with col1:
@@ -94,15 +85,17 @@ def render(trading_engine):
 
     st.markdown("---")
 
+    # Fetch symbols
+    symbols = trading_engine.get_usdt_symbols()
+
     # Pre-fetch OHLCV and filter valid symbols
     valid_symbols = []
     ohlcv_data = {}
     for symbol in symbols:
         df = fetch_ohlcv_futures(symbol=symbol, timeframe=timeframe, limit=limit)
-        if df.empty:
-            continue
-        valid_symbols.append(symbol)
-        ohlcv_data[symbol] = df
+        if not df.empty:
+            valid_symbols.append(symbol)
+            ohlcv_data[symbol] = df
 
     if not valid_symbols:
         st.info("No valid symbols with OHLCV data available.")
@@ -119,8 +112,8 @@ def render(trading_engine):
             col = cols[i]
             df = ohlcv_data[symbol]
 
-            first_close = df['close'].iloc[0]
-            last_close = df['close'].iloc[-1]
+            first_close = df['close'].iloc[0] if not df.empty else 0
+            last_close = df['close'].iloc[-1] if not df.empty else 0
             roi = ((last_close - first_close) / first_close * 100) if first_close else 0.0
 
             col.markdown(

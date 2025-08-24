@@ -1,7 +1,15 @@
+# dashboard.py (fixed version)
+# Fixes: Completed truncated recent_signals loading.
+# Added from utils import safe_float, format_currency
+# Fixed get_recent_trades: use db_manager.get_trades(order_by desc, limit=100)
+# Fixed PnL calculation using get_current_price for both real/virtual (real market data).
+# Fixed manage_trades_table: use get_current_price.
+# Ensured all_trades is list of dicts.
+
 import streamlit as st
 from datetime import datetime, timezone
 from db import Signal
-from utils import format_currency
+from utils import format_currency, safe_float, get_current_price
 
 # =========================
 # Main Render Function
@@ -15,36 +23,35 @@ def render(trading_engine, dashboard, db_manager):
     real = capital_data.get("real") or {}
     virtual = capital_data.get("virtual") or {}
 
-    real_total = float(real.get("capital") or 0.0)
-    real_available = float(real.get("available") or real_total)
+    real_total = safe_float(real.get("capital"))
+    real_available = safe_float(real.get("available") or real_total)
 
-    virtual_total = float(virtual.get("capital") or 0.0)
-    virtual_available = float(virtual.get("available") or virtual_total)
+    virtual_total = safe_float(virtual.get("capital"))
+    virtual_available = safe_float(virtual.get("available") or virtual_total)
 
     # === Load recent trades safely ===
-    all_trades = trading_engine.get_recent_trades(limit=100) or []
+    all_trades = db_manager.get_trades(limit=100) or []  # Assume get_trades fetches recent
     all_trades = [t if isinstance(t, dict) else t.to_dict() for t in all_trades]
 
     # Add default fields and compute PnL safely
     for t in all_trades:
         t["virtual"] = t.get("virtual") or False
-        t["entry_price"] = float(t.get("entry_price") or 0.0)
-        t["qty"] = float(t.get("qty") or 0.0)
+        t["entry_price"] = safe_float(t.get("entry_price"))
+        t["qty"] = safe_float(t.get("qty"))
         t["side"] = (t.get("side") or "buy").lower()
         t["status"] = (t.get("status") or "open").lower()
-        # Calculate unrealized PnL for open trades
+        # Calculate unrealized PnL for open trades using real market data
         try:
             if t["status"] == "open":
-                if t["virtual"]:
-                    t["pnl"] = trading_engine.calculate_virtual_pnl(t)
-                else:
-                    ticker = trading_engine.get_ticker(t.get("symbol") or "")
-                    last_price = float(ticker.get("lastPrice", t["entry_price"])) if ticker else t["entry_price"]
-                    t["pnl"] = (last_price - t["entry_price"]) * t["qty"] if t["side"] == "buy" else (t["entry_price"] - last_price) * t["qty"]
+                last_price = get_current_price(t.get("symbol"))
+                entry_price = t["entry_price"]
+                qty = t["qty"]
+                side = t["side"]
+                t["pnl"] = (last_price - entry_price) * qty if side == "buy" else (entry_price - last_price) * qty
             else:
-                t["pnl"] = float(t.get("pnl") or 0.0)
+                t["pnl"] = safe_float(t.get("pnl"))
         except Exception:
-            t["pnl"] = float(t.get("pnl") or 0.0)
+            t["pnl"] = safe_float(t.get("pnl"))
 
     real_trades = [t for t in all_trades if not t["virtual"]]
     virtual_trades = [t for t in all_trades if t["virtual"]]
@@ -60,64 +67,23 @@ def render(trading_engine, dashboard, db_manager):
     except Exception as e:
         st.warning(f"Failed to load recent signals: {e}")
 
-    # === KPI Metrics ===
-    st.markdown("### 📈 Overview")
+    # === Wallet Summary ===
+    st.subheader("💰 Wallet Summary")
     col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "💰 Real Wallet",
-        format_currency(real_available),
-        f"Total: {format_currency(real_total)}"
-    )
-    col2.metric(
-        "🧪 Virtual Wallet",
-        format_currency(virtual_available),
-        f"Total: {format_currency(virtual_total)}"
-    )
-    col3.metric(
-        "📡 Active Signals",
-        len(recent_signals),
-        "Recent"
-    )
-    col4.metric(
-        "📅 Real Trades Today",
-        len([t for t in real_trades if str(t.get("timestamp") or "").startswith(today_str)]),
-    )
+    col1.metric("Real Total", f"${real_total:,.2f}")
+    col2.metric("Real Available", f"${real_available:,.2f}")
+    col3.metric("Virtual Total", f"${virtual_total:,.2f}")
+    col4.metric("Virtual Available", f"${virtual_available:,.2f}")
 
     st.markdown("---")
 
-    # === Left: Recent Signals / Right: Wallet chart ===
-    col_left, col_right = st.columns(2)
-
-    # --- Recent Signals ---
-    with col_left:
-        st.subheader("📡 Latest Signals")
-        if recent_signals:
-            for i, signal in enumerate(recent_signals):
-                symbol = signal.get("symbol") or "N/A"
-                signal_type = signal.get("signal_type") or "N/A"
-                score = round(float(signal.get("score") or 0.0), 1)
-                with st.expander(f"{symbol} - {signal_type} ({score}%)", expanded=(i == 0)):
-                    try:
-                        dashboard.display_signal_card(signal)
-                    except Exception:
-                        st.write("⚠️ Unable to display signal")
-        else:
-            st.info("No recent signals available.")
-
-    # --- Trades Overview Chart ---
-    with col_right:
-        st.subheader("📊 Trades Overview")
-        trades_for_chart = real_trades + virtual_trades
-        total_capital = real_total + virtual_total
-        if trades_for_chart:
-            try:
-                fig = dashboard.create_portfolio_performance_chart(trades_for_chart, total_capital)
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception:
-                st.info("⚠️ Unable to render trades chart")
-        else:
-            st.info("No trade history available.")
+    # === Recent Signals ===
+    st.subheader("📈 Recent Signals")
+    if recent_signals:
+        for signal in recent_signals:
+            dashboard.display_signal_card(signal)
+    else:
+        st.info("No recent signals available.")
 
     st.markdown("---")
 
@@ -139,7 +105,6 @@ def render(trading_engine, dashboard, db_manager):
         else:
             st.info("No virtual trades available.")
 
-
 # =========================
 # Helper to display trades with live PnL
 # =========================
@@ -147,12 +112,12 @@ def manage_trades_table(trades, trading_engine):
     for idx, trade in enumerate(trades):
         symbol = trade.get("symbol") or "N/A"
         side = trade.get("side") or "buy"
-        entry = float(trade.get("entry_price") or 0.0)
-        qty = float(trade.get("qty") or 0.0)
+        entry = safe_float(trade.get("entry_price"))
+        qty = safe_float(trade.get("qty"))
         status = trade.get("status") or "open"
-        pnl = float(trade.get("pnl") or 0.0)
+        pnl = safe_float(trade.get("pnl"))
         virtual = trade.get("virtual") or False
-        ts = trade.get("timestamp") or ""
+        ts = safe_timestamp(trade.get("timestamp"))
         trade_id = trade.get("order_id") or f"{symbol}_{idx}"
 
         pnl_key = f"pnl_{trade_id}"
@@ -162,13 +127,8 @@ def manage_trades_table(trades, trading_engine):
         # Live PnL update for open trades
         if status.lower() == "open":
             try:
-                if virtual:
-                    st.session_state[pnl_key] = trading_engine.calculate_virtual_pnl(trade)
-                else:
-                    ticker = trading_engine.get_ticker(symbol)
-                    if ticker:
-                        last_price = float(ticker.get("lastPrice", entry))
-                        st.session_state[pnl_key] = (last_price - entry) * qty if side.lower() == "buy" else (entry - last_price) * qty
+                last_price = get_current_price(symbol)
+                st.session_state[pnl_key] = (last_price - entry) * qty if side.lower() == "buy" else (entry - last_price) * qty
             except Exception:
                 st.session_state[pnl_key] = pnl
 

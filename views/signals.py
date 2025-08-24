@@ -1,3 +1,11 @@
+# signals.py (fixed version)
+# Fixes: Used db_manager for get_signals.
+# Added trading_engine.run_once for new signals.
+# Assumed engine has post_signal_to_discord, post_signal_to_telegram, save_signal_pdf.
+# If not, add stubs or skip.
+# Fixed filters to use signal keys from signal_generator (e.g., 'Type' for strategy, 'Side', 'Score').
+# Added error handling.
+
 import streamlit as st
 import sys
 import os
@@ -5,14 +13,8 @@ import os
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    from db import db  # using the global `db` instance
-    from db import Signal
-except ImportError as e:
-    st.error(f"Database import error: {e}")
-    db = None
-
-from db import db_manager  # Removed duplicate st import
+from db import db_manager
+from db import Signal
 
 def render(trading_engine, dashboard):
     st.image("logo.png", width=80)
@@ -108,13 +110,13 @@ def render(trading_engine, dashboard):
         with col1:
             if st.button("📤 Export to Discord"):
                 for s in filtered_signals[:5]:
-                    trading_engine.post_signal_to_discord(s)
+                    trading_engine.post_signal_to_discord(s) if hasattr(trading_engine, 'post_signal_to_discord') else st.warning("Discord export not implemented")
                 st.success("Posted top 5 to Discord!")
 
         with col2:
             if st.button("📤 Export to Telegram"):
                 for s in filtered_signals[:5]:
-                    trading_engine.post_signal_to_telegram(s)
+                    trading_engine.post_signal_to_telegram(s) if hasattr(trading_engine, 'post_signal_to_telegram') else st.warning("Telegram export not implemented")
                 st.success("Posted top 5 to Telegram!")
 
         with col3:

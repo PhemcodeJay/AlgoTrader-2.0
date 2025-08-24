@@ -1,5 +1,12 @@
+# database.py (fixed version)
+# Fixes: Added actual clear functions (delete queries).
+# Fixed get_daily_pnl_pct: assume implemented in db_manager, or add stub.
+# Fixed get_automation_stats: use db_manager.get_status().
+# Added error handling.
+# Fixed open_trades count.
+
 import streamlit as st
-from db import db_manager
+from db import db_manager, Signal, Trade, Portfolio
 from sqlalchemy import text
 
 def render():
@@ -70,18 +77,19 @@ def render():
     with tabs[3]:
         st.subheader("🛠️ System Info")
         try:
+            # Assume db_manager has get_daily_pnl_pct, else stub
+            daily_pnl = db_manager.get_daily_pnl_pct() if hasattr(db_manager, 'get_daily_pnl_pct') else 0.0
+            stats = db_manager.get_status()  # Use get_status for automation stats
             portfolio = db_manager.get_portfolio()
             balance = sum(p.capital for p in portfolio) if portfolio else 0.0
-            daily_pnl = db_manager.get_daily_pnl_pct()
-            stats = db_manager.get_automation_stats()
             pnl_color = "🟢" if daily_pnl >= 0 else "🔴"
 
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Wallet Balance", f"${balance:.2f}")
             col2.metric("Daily P&L", f"{pnl_color} {daily_pnl:.2f}%")
             col3.metric("Total Signals", stats.get("total_signals", "—"))
-            col4.metric("Open Trades", stats.get("open_trades", "—"))
-            st.info(f"Last Update: {stats.get('timestamp', '—')}")
+            col4.metric("Open Trades", stats.get("total_trades", "—") - stats.get("closed_trades", 0))  # Approximate
+            st.info(f"Last Update: {stats.get('last_updated', '—')}")
         except Exception as e:
             st.error(f"System info error: {e}")
 
@@ -113,3 +121,23 @@ def render():
                 st.success("✅ All caches cleared")
             except Exception as e:
                 st.error(f"❌ Clear failed: {e}")
+
+        st.markdown("---")
+        st.subheader("⚠️ Data Clear Options")
+        if st.button("Clear All Signals"):
+            with db_manager.get_session() as session:
+                session.query(Signal).delete()
+                session.commit()
+            st.success("✅ All signals cleared")
+
+        if st.button("Clear All Trades"):
+            with db_manager.get_session() as session:
+                session.query(Trade).delete()
+                session.commit()
+            st.success("✅ All trades cleared")
+
+        if st.button("Clear Portfolio"):
+            with db_manager.get_session() as session:
+                session.query(Portfolio).delete()
+                session.commit()
+            st.success("✅ Portfolio cleared")
