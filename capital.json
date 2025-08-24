@@ -1,16 +1,18 @@
 {
+    // Real wallet (synced with Bybit API)
     "real": {
-        "capital": 0.0,
-        "available": 0.0,
-        "used": 0.0,
-        "start_balance": 0.0,
-        "currency": "USDT"
+        "capital": 100.0,    // Total balance (updated via Bybit API)
+        "available": 100.0,  // Available for trading
+        "used": 0.0,          // Margin used in open positions
+        "start_balance": 1000.0, // Initial balance for tracking
+        "currency": "USDT"    // Currency for trading
     },
+    // Virtual wallet (managed via capital.json)
     "virtual": {
-        "capital": 200.0,
-        "available": 200.0,
-        "used": 0.0,
-        "start_balance": 200.0,
-        "currency": "USDT"
+        "capital": 200.0,     // Total virtual balance
+        "available": 200.0,   // Available for virtual trading
+        "used": 0.0,          // Margin used in virtual positions
+        "start_balance": 200.0, // Initial virtual balance
+        "currency": "USDT"    // Currency for virtual trading
     }
 }

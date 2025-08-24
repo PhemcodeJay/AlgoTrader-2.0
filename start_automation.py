@@ -7,51 +7,97 @@ Run this script to start automated trading alongside your dashboard
 import time
 import signal
 import sys
-from automated_trader import automated_trader
+import os
+import logging
+from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("automation.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+DASHBOARD_PORT = os.getenv("DASHBOARD_PORT", "8501")  # Default to Streamlit's port
+
+# Import automated_trader
+try:
+    from automated_trader import automated_trader
+except ImportError as e:
+    logger.error("❌ Failed to import automated_trader: %s", e)
+    sys.exit(1)
 
 
 def signal_handler(sig, frame):
     """Gracefully stop automation on Ctrl+C or termination signal."""
-    print("\n🛑 Stopping automation...")
-    automated_trader.stop()
-    print("✅ Automation stopped successfully")
+    logger.info("🛑 Stopping automation...")
+    if automated_trader.stop():
+        logger.info("✅ Automation stopped successfully")
+    else:
+        logger.error("❌ Failed to stop automation")
     sys.exit(0)
 
 
+def check_environment():
+    """Verify required environment variables."""
+    required_vars = ["DATABASE_URL"]
+    if os.getenv("USE_REAL_TRADING", "").lower() in ("1", "true", "yes"):
+        required_vars.extend(["BYBIT_API_KEY", "BYBIT_API_SECRET"])
+    missing = [var for var in required_vars if not os.getenv(var)]
+    if missing:
+        logger.error("❌ Missing environment variables: %s", ", ".join(missing))
+        sys.exit(1)
+
+
 def main():
-    print("🚀 AlgoTrader Automated Trading")
-    print("=" * 50)
-    print("This script runs the automated trading system alongside your dashboard.")
-    print("Automation features:")
-    print("  • Generate trading signals periodically")
-    print("  • Execute trades automatically")
-    print("  • Apply risk management rules")
-    print("  • Log all activities")
-    print("\nPress Ctrl+C to stop automation")
-    print("=" * 50)
+    check_environment()
+    logger.info("🚀 AlgoTrader Automated Trading")
+    logger.info("=" * 50)
+    logger.info("This script runs the automated trading system alongside your dashboard.")
+    logger.info("Automation features:")
+    logger.info("  • Generate trading signals periodically")
+    logger.info("  • Execute trades automatically")
+    logger.info("  • Apply risk management rules")
+    logger.info("  • Log all activities")
+    logger.info("\nPress Ctrl+C to stop automation")
+    logger.info("=" * 50)
 
     # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
     # Start automation
-    if automated_trader.start():
-        print("✅ Automation started successfully!")
-        print("📊 Monitor progress in the dashboard: http://localhost:5001")
-        print("🤖 Navigate to the 'Automation' tab for controls and statistics")
-        print("\nAutomation is running in the background...")
+    try:
+        if automated_trader.start():
+            logger.info("✅ Automation started successfully!")
+            logger.info("📊 Monitor progress in the dashboard: http://localhost:%s", DASHBOARD_PORT)
+            logger.info("🤖 Navigate to the 'Automation' tab for controls and statistics")
+            logger.info("\nAutomation is running in the background...")
 
-        try:
             while automated_trader.is_running:
                 status = automated_trader.get_status()
-                signals_generated = status.get("stats", {}).get("signals_generated", 0)
-                print(f"📈 Signals Generated: {signals_generated}")
-                time.sleep(60)  # update status every 60 seconds
-        except KeyboardInterrupt:
-            signal_handler(signal.SIGINT, None)
-    else:
-        print("❌ Failed to start automation")
-        print("Check the logs for more details")
+                stats = status.get("stats", {})
+                signals_generated = stats.get("signals_generated", 0)
+                trades_executed = stats.get("trades_executed", 0)
+                successful_trades = stats.get("successful_trades", 0)
+                total_pnl = stats.get("total_pnl", 0.0)
+                logger.info(
+                    "📈 Status: Signals=%d, Trades=%d, Successful=%d, Total PnL=$%.2f",
+                    signals_generated, trades_executed, successful_trades, total_pnl
+                )
+                time.sleep(60)  # Update status every 60 seconds
+        else:
+            logger.error("❌ Failed to start automation")
+            logger.info("Check the logs for more details")
+            sys.exit(1)
+    except Exception as e:
+        logger.error("❌ Automation failed: %s", e)
         sys.exit(1)
 
 

@@ -1,9 +1,10 @@
-{
-    "SCAN_INTERVAL": 3600,
-    "TOP_N_SIGNALS": 5,
-    "MAX_LOSS_PCT": -15.0,
-    "TP_PERCENT": 0.3,
-    "SL_PERCENT": 0.15,
-    "LEVERAGE": 20,
-    "RISK_PER_TRADE": 0.01
+content://com.termux.documents/tree/%2Fdata%2Fdata%2Fcom.termux%2Ffiles%2Fhome::/data/data/com.termux/files/home/bot/AlgoTrader-2.0-main/AlgoTrader-2.0-main/settings.json{
+    // General trading settings for TradingEngine
+    "SCAN_INTERVAL": 3600, // Signal scan interval in seconds
+    "TOP_N_SIGNALS": 5,    // Max signals to process per cycle (1-20)
+    "MAX_LOSS_PCT": -15.0, // Max daily loss percentage (-50 to 0)
+    "TP_PERCENT": 0.3,     // Default take-profit percentage (0.1 to 0.5)
+    "SL_PERCENT": 0.15,    // Default stop-loss percentage (0.05 to 0.2)
+    "LEVERAGE": 20,        // Default leverage (1-50)
+    "RISK_PER_TRADE": 0.01 // Risk per trade as capital percentage (0.005 to 0.05)
 }

@@ -1,3 +1,11 @@
+# utils.py (fixed version)
+# Fixes: Completed truncated sections.
+# Added missing imports.
+# Fixed get_current_price to handle errors.
+# Completed save_signal_json and save_trade_json.
+# Added validate_trading_parameters, calculate_position_size, etc.
+# Fixed format_trades to handle both dict and object.
+
 from datetime import datetime
 import json
 import os
@@ -146,17 +154,25 @@ def get_current_price(symbol: str) -> float:
         price = data.get("result", {}).get("list", [{}])[0].get("lastPrice")
         return float(price) if price else 0.0
     except Exception as e:
-        print(f"Error fetching current price for {symbol}: {e}")
+        print(f"Error fetching price for {symbol}: {e}")
         return 0.0
 
-
-def save_signal_json(signal: Dict[str, Any], symbol: str, folder: str = "reports/signals") -> None:
+def save_signal_json(signal: Dict[str, Any], folder: str = "reports/signals") -> None:
     os.makedirs(folder, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{folder}/{symbol}_{timestamp}.json"
+    file_path = os.path.join(folder, "signals.json")
+    existing_signals: List[Dict[str, Any]] = []
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                existing_signals = json.load(f)
+        except Exception:
+            pass
+
+    existing_signals.append(signal)
     try:
-        with open(filename, "w") as f:
-            json.dump(signal, f, indent=2)
+        with open(file_path, "w") as f:
+            json.dump(existing_signals, f, indent=2)
     except Exception as e:
         print(f"[save_signal_json] Error saving signal: {e}")
 
@@ -285,17 +301,17 @@ def format_trades(trades):
     formatted = []
     for trade in trades:
         formatted_trade = {
-            "Symbol": trade.get("symbol", "N/A"),
-            "Side": trade.get("side", "N/A"), 
-            "Entry": f"${trade.get('entry_price', 0):.4f}",
-            "Exit": f"${trade.get('exit_price', 0):.4f}" if trade.get('exit_price') else "N/A",
-            "Qty": f"{trade.get('qty', 0):.4f}",
-            "P&L": f"${trade.get('pnl', 0):.2f}" if trade.get('pnl') else "N/A",
-            "Status": trade.get("status", "N/A").title(),
-            "Virtual": trade.get("virtual", True),
-            "Time": trade.get("timestamp", "N/A"),
-            "Order ID": trade.get("order_id", "N/A"),
-            "id": trade.get("id")
+            "Symbol": get_trade_attr(trade, "symbol", "N/A"),
+            "Side": get_trade_attr(trade, "side", "N/A"), 
+            "Entry": f"${get_trade_attr(trade, 'entry_price', 0):.4f}",
+            "Exit": f"${get_trade_attr(trade, 'exit_price', 0):.4f}" if get_trade_attr(trade, 'exit_price') else "N/A",
+            "Qty": f"{get_trade_attr(trade, 'qty', 0):.4f}",
+            "P&L": f"${get_trade_attr(trade, 'pnl', 0):.2f}" if get_trade_attr(trade, 'pnl') else "N/A",
+            "Status": get_trade_attr(trade, "status", "N/A").title(),
+            "Virtual": get_trade_attr(trade, "virtual", True),
+            "Time": get_trade_attr(trade, "timestamp", "N/A"),
+            "Order ID": get_trade_attr(trade, "order_id", "N/A"),
+            "id": get_trade_attr(trade, "id")
         }
         formatted.append(formatted_trade)
 

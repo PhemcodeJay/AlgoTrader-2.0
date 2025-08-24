@@ -1,40 +1,51 @@
-aiohttp
-altair
-APScheduler
-ccxt
-colorama
-discord-webhook
-fastapi
-fpdf2
-joblib
-matplotlib
-numpy
-openpyxl
-pandas
-plotly
-psycopg2-binary
-python-binance
-python-dotenv
-python-multipart
-python-telegram-bot
-pytz
-pybit
-reportlab
-requests
-schedule
-scikit-learn
-scipy
-seaborn
-sqlalchemy
-statsmodels
-streamlit
-streamlit-aggrid
-streamlit-autorefresh
-ta
-tqdm
-uvicorn
-watchdog
-websockets
-xlsxwriter
-xgboost
-yfinance
+# Core dependencies
+python-dotenv==1.0.1     # Environment variable management
+requests==2.32.3         # HTTP requests
+pybit==5.7.2            # Bybit API client for real-time market data and trading
+sqlalchemy==2.0.35      # Database ORM for PostgreSQL
+psycopg2-binary==2.9.9  # PostgreSQL adapter
+
+# Data processing and machine learning
+numpy==1.26.4           # Numerical computations
+pandas==2.2.3           # Data manipulation
+scikit-learn==1.5.2     # Machine learning utilities
+xgboost==2.1.1          # XGBoost for MLFilter
+joblib==1.4.2           # Model persistence
+scipy==1.14.1           # Scientific computations
+statsmodels==0.14.3     # Statistical modeling
+
+# Visualization
+streamlit==1.38.0       # Web app framework for dashboard
+streamlit-aggrid==0.3.4 # Data grid for Streamlit
+streamlit-autorefresh==1.0.1 # Auto-refresh for Streamlit
+plotly==5.24.1          # Interactive charts for candlestick plots
+matplotlib==3.9.2       # Plotting library
+seaborn==0.13.2         # Statistical data visualization
+altair==5.4.1           # Declarative visualization
+
+# Financial and technical analysis
+ta==0.11.0              # Technical analysis indicators
+yfinance==0.2.44        # Market data fetching for virtual trading
+
+# Automation and utilities
+APScheduler==3.10.4     # Task scheduling for automation
+watchdog==5.0.3         # File system monitoring
+tqdm==4.66.5            # Progress bars
+colorama==0.4.6         # Colored terminal output
+
+# Notifications
+discord-webhook==1.3.1  # Discord notifications
+python-telegram-bot==21.5 # Telegram notifications
+
+# Reporting
+openpyxl==3.1.5         # Excel file handling
+xlsxwriter==3.2.0       # Excel file writing
+reportlab==4.2.2        # PDF generation
+fpdf2==2.7.9            # Alternative PDF generation
+
+# API and web
+fastapi==0.115.0        # FastAPI framework
+uvicorn==0.30.6         # ASGI server
+python-multipart==0.0.9 # Form data handling
+websockets==13.0.1      # WebSocket support
+aiohttp==3.10.5         # Asynchronous HTTP client

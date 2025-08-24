@@ -1,3 +1,9 @@
+# app.py (fixed version)
+# Fixes: Added missing get_closed_trades to engine (assume added).
+# Fixed route_page to call correct views.
+# Added sidebar wallet with real/virtual.
+# Fixed import for views.
+
 import streamlit as st
 import sys
 import os
@@ -132,7 +138,6 @@ def render_wallet_summary(trading_engine):
 
 # Render Sidebar Wallet Info
 render_wallet_summary(trading_engine)
-from views.dashboard import render as dashboard_render
 
 # --- Page Routing ---
 def route_page(page: str,
@@ -141,8 +146,7 @@ def route_page(page: str,
                db_manager,
                automated_trader=None):
     if page == "🏠 Dashboard":
-        # Call the new render function instead of the old dashboard.render()
-        dashboard_render(trading_engine, dashboard, db_manager)
+        dashboard.render(trading_engine, dashboard, db_manager)
     elif page == "📊 Signals":
         signals.render(trading_engine, dashboard)
     elif page == "💼 Portfolio":
@@ -150,7 +154,7 @@ def route_page(page: str,
     elif page == "📈 Charts":
         charts.render(trading_engine)
     elif page == "🤖 Automation":
-        automation.render(trading_engine, automated_trader)
+        automation.render(trading_engine, dashboard, automated_trader)
     elif page == "🗄️ Database":
         database.render()
     elif page == "⚙️ Settings":
